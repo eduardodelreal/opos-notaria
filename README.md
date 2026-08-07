@@ -1,166 +1,256 @@
-# opos-notaria
+# Cante · app de estudio para la oposición a Notarías
 
-Web app para **trackear el estudio de las oposiciones a Notaría en España**.
+Herramienta de precisión para opositores a Notarías: **cronometra los cantes, los
+graba, calcula la nota combinando contenido y tiempo, decide qué toca repasar hoy y
+convierte cinco años de estudio en números que se pueden leer.**
 
-Herramienta pensada para opositores que necesitan una forma seria de planificar temas, cantar el programa, medir horas efectivas de estudio, hacer seguimiento de repasos, y llegar al examen sin lagunas.
-
-> Estado: `pre-alfa` — este README describe la visión de producto. Las instrucciones detalladas de implementación llegan pronto.
+> Estado: **v0.1 funcional**. 328 temas precargados, cante con cronómetro y
+> grabación, sistema de vueltas, calendario con tareas recurrentes, bombo virtual y
+> métricas. Arranca sin backend en modo local.
 
 ---
 
 ## Índice
 
-1. [Contexto: la oposición](#contexto-la-oposición)
-2. [Problema que resuelve](#problema-que-resuelve)
-3. [Público objetivo](#público-objetivo)
-4. [Funcionalidades previstas](#funcionalidades-previstas)
-5. [Stack técnico](#stack-técnico)
-6. [Arquitectura](#arquitectura)
-7. [Modelo de datos (borrador)](#modelo-de-datos-borrador)
-8. [Roadmap](#roadmap)
-9. [Cómo arrancar en local](#cómo-arrancar-en-local)
+1. [Qué hace](#qué-hace)
+2. [Por qué no es un Todoist con temas](#por-qué-no-es-un-todoist-con-temas)
+3. [Stack](#stack)
+4. [Arrancar en local](#arrancar-en-local)
+5. [Desplegar](#desplegar)
+6. [Usuario de prueba](#usuario-de-prueba)
+7. [Modelo de datos](#modelo-de-datos)
+8. [Cómo funciona el sistema de vueltas](#cómo-funciona-el-sistema-de-vueltas)
+9. [Cómo se calcula la nota](#cómo-se-calcula-la-nota)
 10. [Estructura del repo](#estructura-del-repo)
-11. [Convenciones](#convenciones)
-12. [Licencia](#licencia)
+11. [Decisiones de producto](#decisiones-de-producto)
 
 ---
 
-## Contexto: la oposición
+## Qué hace
 
-Las **oposiciones a Notarías** en España son una de las pruebas más exigentes del sistema jurídico español:
+### Hoy
+El panel de la mañana. Cante neto del día, horas de estudio, ratio de cantes que
+entran en el tiempo tasado, racha, la **cola de temas ordenada por riesgo de
+examen**, tareas del día, estado del programa, previsión de carga a seis semanas y
+mapa de constancia.
 
-- **Programa oficial**: ~328 temas (Civil, Mercantil, Hipotecario, Fiscal, Notarial, etc.).
-- **Duración media** del opositor: **4–7 años** de estudio a jornada completa.
-- **Exámenes**: 4 ejercicios (dos orales de "cante" de temas + dos de dictamen/práctico).
-- **Formato oral**: el opositor recita el tema de memoria ante tribunal, con tiempo tasado por tema.
-- **Preparador**: casi todos los opositores trabajan con un preparador (notario) al que "cantan" temas semanalmente.
+### Cantar
+El módulo central. Tres modos: **tema único**, **tanda de bloque** o **simulacro**
+(varios temas seguidos sacados del bombo).
 
-Este contexto marca las decisiones de producto: la app no es un Todoist genérico, es una herramienta de dominio.
+- Cronómetro grande con el fondo cambiando de verde a ámbar (80% del tiempo) y a
+  terracota (límite superado).
+- **Grabación automática** en cuanto arranca el cronómetro, a 32 kbps mono
+  (≈3 MB por cante de 12 minutos), vinculada al tema.
+- **Modo ciego**: bloquea la pantalla para cantar paseando sin toques accidentales,
+  manteniendo el cronómetro visible.
+- Barra espaciadora para arrancar y parar; `B` para el modo ciego.
+- Wake lock: la pantalla no se apaga mientras cantas.
+- Al terminar: autocalificación de contenido (1–5), lagunas, si fue ante el
+  preparador y notas. La nota final sale de combinar contenido y tiempo.
 
----
+### Temario
+Los 328 temas por bloque, con estado, vueltas, nota media, próxima revisión y horas
+acumuladas. Filtros por bloque y estado, cuatro órdenes (programa, riesgo, peor
+nota, cantado hace más). Cada tema abre una ficha con su historial de cantes,
+reproductor de audio, notas propias, registro de estudio y **botón para compartir el
+cante con el preparador**. Puedes editar títulos, excluir temas del programa o
+añadir los tuyos.
 
-## Problema que resuelve
+### Calendario
+Vista de mes, de semana y de series. **Tareas recurrentes de verdad**: diaria cada
+N días, laborables, semanal en los días que elijas cada N semanas, mensual el día X
+cada N meses, con fecha de fin opcional. Plantillas rápidas (cante diario, día de
+preparador, dictamen semanal, simulacro mensual). Cada día muestra la carga
+planificada frente a tu objetivo y los repasos que coloca el sistema de vueltas.
 
-Los opositores hoy gestionan su preparación con **Excel, cuadernos, o apps genéricas** que no entienden la estructura del programa. Los problemas típicos:
+El **botón de pánico** reparte lo pendiente de un día entre los siguientes sin
+pasarte del objetivo diario (first-fit decreasing).
 
-- No saben con precisión **cuántas horas efectivas** llevan estudiadas por tema.
-- Pierden el rastro de **cuándo repasaron por última vez** cada tema → lagunas antes del examen.
-- No pueden medir su **progresión de "cante"** (velocidad, fallos, tiempo por epígrafe).
-- No tienen visibilidad clara del **estado global** del programa: qué está verde, qué está en rojo.
-- Su preparador les da feedback verbal que **se pierde** en vez de acumularse como dato.
+### Métricas
+Nota media, ratio en tiempo, duración media del cante frente al objetivo, evolución
+de la nota y de la duración (media móvil de 5), horas por día, cantes por semana,
+tabla de rendimiento por bloque, distribución de autocalificaciones, hitos,
+simulacros y el **índice de preparación** con estimación de cuándo cierras la
+primera vuelta al ritmo actual.
 
----
+### Bombo
+Sorteo animado con bolas. Configuras cuántas salen, si restringes a un bloque, si
+solo entran temas ya tocados y si el sorteo se sesga hacia los temas flojos. Al
+terminar, cantas los temas sorteados seguidos como simulacro.
 
-## Público objetivo
-
-- **Opositor a Notarías** (usuario principal).
-- Secundariamente: opositor a **Registros de la Propiedad** (programa muy similar) y **Judicatura / Fiscales** (ajustando programa).
-- **Preparadores** — a futuro, dashboard para seguir a sus opositores.
-
----
-
-## Funcionalidades previstas
-
-> Esta sección se completará con las instrucciones detalladas del usuario. Lista inicial de referencia:
-
-### Núcleo (MVP)
-
-- [ ] **Programa oficial precargado** (los ~328 temas por materia).
-- [ ] **Estado por tema**: no empezado / estudiando / cantable / dominado / oxidado.
-- [ ] **Timer de estudio** con tracking de horas efectivas por tema y por sesión.
-- [ ] **Registro de cantes**: fecha, duración, nota del preparador, fallos por epígrafe.
-- [ ] **Sistema de repaso espaciado** (SRS tipo Anki) adaptado al ciclo de la oposición.
-- [ ] **Dashboard**: horas semanales, temas dominados vs. pendientes, alertas de "temas oxidados".
-
-### Fase 2
-
-- [ ] **Calendario/planificación**: asignar temas a semanas, previsualizar carga.
-- [ ] **Notas por epígrafe** dentro de cada tema.
-- [ ] **Flashcards** integradas para epígrafes concretos.
-- [ ] **Estadísticas avanzadas**: curva de aprendizaje, predicción de "listo para examen".
-- [ ] **Modo preparador**: alta de alumnos, feedback estructurado.
-
-### Fase 3
-
-- [ ] **Comunidad** (opcional, con moderación): comparación anónima de progreso.
-- [ ] **Integración con audio**: grabar cantes y transcribir para autocorrección.
-- [ ] **App móvil** (Expo/React Native) para timer + repaso en cualquier sitio.
+### Ajustes
+Tiempo objetivo por tema, temas por ejercicio, objetivos diarios, día de
+preparador, agresividad del sistema de vueltas (con vista previa de los escalones),
+umbral de oxidación, exportar/importar copia de seguridad en JSON.
 
 ---
 
-## Stack técnico
+## Por qué no es un Todoist con temas
 
-> Por definir con las instrucciones del usuario. Propuesta por defecto:
+Cuatro decisiones que cambian todo:
 
-- **Frontend**: Next.js 15 (App Router) + TypeScript + Tailwind + shadcn/ui.
-- **Backend**: Next.js API routes / Server Actions.
-- **Base de datos**: Supabase (Postgres + Auth + RLS + Storage).
-- **Auth**: Supabase Auth (email + Google).
-- **Deploy**: Vercel (frontend) + Supabase (backend gestionado).
-- **Analytics**: PostHog o similar (opt-in).
+1. **La unidad es el tema completo, no la flashcard.** El opositor recita 20 minutos
+   seguidos con estructura y citas. Partirlo en tarjetas entrena una habilidad que no
+   se examina.
+2. **El tiempo es la mitad de la nota.** Un cante impecable en 19 minutos cuando el
+   límite son 12 no es un 10: en el tribunal te cortan. La app lo penaliza.
+3. **Los temas se oxidan solos.** Un tema dominado que llevas 80 días sin cantar
+   pasa a `oxidado` sin que hagas nada, porque eso es lo que pasa en tu cabeza.
+4. **Fallar no resetea.** Un tema de sexta vuelta que hoy sale flojo retrocede uno o
+   dos escalones, no vuelve al día 1. El coste de un repaso es 12 minutos, no 8
+   segundos.
 
----
-
-## Arquitectura
-
-```
-┌──────────────────────────┐
-│  Next.js App (Vercel)    │
-│  - UI + Server Actions   │
-│  - Auth con Supabase SDK │
-└───────────┬──────────────┘
-            │
-            ▼
-┌──────────────────────────┐
-│  Supabase                │
-│  - Postgres (RLS)        │
-│  - Auth                  │
-│  - Storage (audio cantes)│
-└──────────────────────────┘
-```
+La lista completa de lo que entra y lo que no, con los motivos, está en
+[`docs/QUE-SI-QUE-NO.md`](docs/QUE-SI-QUE-NO.md).
 
 ---
 
-## Modelo de datos (borrador)
+## Stack
 
-Tablas principales previstas:
-
-- `users` — perfil del opositor (fecha inicio, oposición objetivo, preparador).
-- `subjects` — materias (Civil, Mercantil, Hipotecario…).
-- `topics` — temas del programa (numeración oficial, materia, texto).
-- `topic_status` — estado por usuario y tema.
-- `study_sessions` — sesiones de estudio con timer (inicio, fin, tema, notas).
-- `recitations` — cantes registrados (fecha, tema, duración, valoración, feedback).
-- `reviews` — repasos programados por SRS.
-- `notes` — notas libres por tema/epígrafe.
-
-Detalle final tras las instrucciones del usuario.
+- **React 18 + TypeScript estricto + Vite** — SPA estática, sin servidor propio.
+- **Tailwind CSS** con paleta clara propia (salvia, terracota apagada, oro viejo,
+  papel cálido). Tipografías: Inter, Instrument Serif, JetBrains Mono.
+- **Supabase** — Postgres con RLS, Auth por email y Storage privado para los audios.
+- **Netlify** — build y hosting, con redirect SPA.
+- **Cero dependencias de gráficos**: los anillos, barras, líneas, heatmaps y
+  sparklines son SVG escrito a mano (`src/components/charts.tsx`). Bundle final
+  ~163 kB gzip.
+- **Sin backend, funciona igual**: si faltan las variables de Supabase la app
+  arranca en modo local con `localStorage` + IndexedDB para los audios.
 
 ---
 
-## Roadmap
-
-- **v0.1** — Bootstrapping: Next.js + Supabase + Auth + seed del programa oficial.
-- **v0.2** — MVP: estado por tema, timer, dashboard básico.
-- **v0.3** — Cantes y repaso espaciado.
-- **v0.4** — Estadísticas avanzadas.
-- **v1.0** — Modo preparador y multi-oposición.
-
----
-
-## Cómo arrancar en local
-
-> Instrucciones definitivas se añadirán cuando exista el código. Placeholder:
+## Arrancar en local
 
 ```bash
-# Requisitos: Node 20+, pnpm, cuenta de Supabase
-
-git clone https://github.com/eduardodelreal/opos-notaria.git
-cd opos-notaria
-pnpm install
-cp .env.example .env.local  # rellenar con credenciales de Supabase
-pnpm dev
+npm install
+npm run dev          # http://localhost:5173
 ```
+
+Sin configurar nada, entra en **«modo local»** desde la pantalla de acceso: el
+programa completo está precargado y puedes cantar un tema en 30 segundos. Todo se
+guarda en este navegador.
+
+Para conectar Supabase:
+
+```bash
+cp .env.example .env.local   # rellena VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
+npm run dev
+```
+
+Scripts:
+
+```bash
+npm run dev         # servidor de desarrollo
+npm run build       # tsc -b && vite build  →  dist/
+npm run preview     # sirve dist/ como en producción
+npm run typecheck   # solo comprobación de tipos
+```
+
+---
+
+## Desplegar
+
+Guía completa paso a paso: **[`docs/DEPLOY.md`](docs/DEPLOY.md)**.
+
+Resumen:
+
+1. Proyecto en Supabase → SQL Editor → ejecuta
+   [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql).
+2. Netlify → importa el repo (lee `netlify.toml`, no hay que configurar el build).
+3. Añade `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` en las variables de entorno
+   de Netlify y **relanza el deploy** (Vite las inyecta en tiempo de build).
+
+---
+
+## Usuario de prueba
+
+```bash
+SUPABASE_URL="https://xxxx.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="eyJ...service_role..." \
+DEMO_EMAIL="tu@email.com" \
+DEMO_PASSWORD="UnaClaveSegura123" \
+node scripts/seed-demo.mjs
+```
+
+Crea el usuario (con email ya confirmado) y le siembra siete meses de estudio
+realista: ~200 temas con progreso, ~530 cantes con notas que mejoran con el tiempo,
+~750 h de estudio, temas oxidados, seis tareas recurrentes y dos simulacros. Así el
+panel y las métricas se ven vivos desde el primer segundo.
+
+`RESET=1` borra sus datos antes de sembrar · `VACIO=1` crea el usuario sin datos.
+
+> La `service_role key` salta RLS: úsala solo en tu terminal. Nunca en el repo ni en
+> una variable de Netlify con prefijo `VITE_`.
+
+---
+
+## Modelo de datos
+
+| Tabla | Contenido |
+|---|---|
+| `perfiles` | Un registro por usuario: `ajustes` (jsonb), días cumplidos, hitos. |
+| `temas_usuario` | Solo las **diferencias** respecto al catálogo del código: títulos editados, temas excluidos, temas propios. |
+| `progreso` | Estado por usuario y tema: estado, vueltas, intervalo, facilidad, último cante, próxima revisión, nota media, minutos. |
+| `cantes` | Cada sesión de cante: duración, objetivo vigente, calificación, nota, lagunas, si fue ante el preparador, ruta del audio. |
+| `sesiones` | Estudio sin cantar: minutos y tipo (lectura, esquema, memorización, dictamen). |
+| `tareas` | Tareas con `recurrencia` en jsonb y arrays de fechas completadas y saltadas. |
+| `simulacros` | Ejercicios completos: temas sorteados, duración total, nota media. |
+
+RLS activo en todas: la política es `auth.uid() = user_id`. Los audios viven en el
+bucket privado `cantes`, en la carpeta `<user_id>/`, con políticas de Storage que
+comprueban la primera carpeta de la ruta.
+
+El catálogo de los 328 temas está en el **código**
+([`src/data/programa.ts`](src/data/programa.ts)), no en la base de datos: es el mismo
+para todos, cambia con los despliegues y así el primer arranque no necesita ninguna
+consulta.
+
+---
+
+## Cómo funciona el sistema de vueltas
+
+Implementado en [`src/lib/srs.ts`](src/lib/srs.ts). Cinco diferencias deliberadas
+frente a Anki:
+
+1. **Escalones fijos**, no una curva continua: `1, 3, 7, 14, 25, 40, 60, 90, 130, 180`
+   días. El opositor razona en vueltas y necesita previsibilidad para planificar.
+2. **Fallar retrocede, no resetea.** Calificación 1 baja tres escalones, 2 baja dos,
+   3 mantiene, 4–5 sube uno.
+3. **Jitter determinista de ±12%** por tema, para que no se acumulen treinta
+   vencimientos el mismo día.
+4. **Tope por convocatoria** y techo absoluto de 210 días. Si el examen es en cinco
+   meses, ningún intervalo se programa a ocho: todo tema cae al menos una vez más
+   antes de la fecha. Y ningún tema pasa de siete meses sin cantarse, por dominado
+   que esté.
+5. **Oxidación.** Un tema `dominado` que pasa del umbral de días sin cantar (75 por
+   defecto, configurable) se recalcula como `oxidado` en cada arranque.
+
+La **cola del día** ordena los vencidos por un índice de riesgo 0–100 que combina
+retraso sobre la fecha prevista, nota media del tema, número de vueltas y frescura,
+y está topada por tu objetivo diario de cantes para que sea alcanzable. Solo sugiere
+temas nuevos si el arrastre está bajo control.
+
+---
+
+## Cómo se calcula la nota
+
+```
+nota = contenido + ajuste_tiempo − penalización_lagunas
+```
+
+- **contenido**: autocalificación 1–5 → 0 / 2,5 / 5 / 7,5 / 10.
+- **ajuste_tiempo**, sobre el ratio `duración / objetivo`:
+  - dentro de la ventana **88%–105%** → **+0,3** (bonus por clavar el reloj);
+  - por encima → **−0,9 por cada 10% de exceso**, hasta −3,5;
+  - por debajo del 88% → **−0,8 por cada 10%**, hasta −4,5. Quedarse muy corto
+    casi siempre significa epígrafes saltados, no eficiencia: un tema «perfecto»
+    recitado en 3 de los 12 minutos sale con un 5,5, no con un 10.
+- **lagunas**: −0,4 cada una, máximo −1,5.
+
+Por eso «en tiempo» es una **ventana**, no «por debajo del límite»: un tema recitado
+en 3 minutos cuando el objetivo son 12 no está en tiempo, está incompleto.
 
 ---
 
@@ -168,30 +258,47 @@ pnpm dev
 
 ```
 opos-notaria/
-├── app/               # Next.js App Router
-├── components/        # UI (shadcn/ui + custom)
-├── lib/               # Utilidades, cliente Supabase
-├── db/                # Migraciones y seeds del programa oficial
-├── public/            # Assets estáticos
-├── docs/              # Documentación de producto
-└── README.md
+├── src/
+│   ├── data/programa.ts        # los 328 temas por bloque
+│   ├── lib/
+│   │   ├── types.ts            # modelo de dominio
+│   │   ├── srs.ts              # sistema de vueltas, riesgo, nota, oxidación
+│   │   ├── recurrence.ts       # motor de recurrencia y botón de pánico
+│   │   ├── audio.ts            # grabación, Storage/IndexedDB, enlace al preparador
+│   │   ├── repo.ts             # LocalRepo | SupabaseRepo (misma interfaz)
+│   │   ├── logros.ts           # hitos y nivel
+│   │   ├── dates.ts            # fechas locales, sin desfase UTC
+│   │   └── utils.ts
+│   ├── store/AppStore.tsx      # estado global, auth y todas las mutaciones
+│   ├── components/
+│   │   ├── ui.tsx              # Card, Modal, Tabs, Toggle, Slider, Chip…
+│   │   ├── charts.tsx          # Ring, Barras, Línea, Heatmap, Sparkline
+│   │   └── Layout.tsx
+│   └── pages/                  # Login, Dashboard, Cante, Temario,
+│                               # Calendario, Metricas, Bombo, Ajustes
+├── supabase/migrations/        # esquema + RLS + bucket
+├── scripts/seed-demo.mjs       # usuario de prueba con datos realistas
+├── docs/
+│   ├── QUE-SI-QUE-NO.md        # decisiones de producto
+│   └── DEPLOY.md               # despliegue paso a paso
+└── netlify.toml
 ```
 
 ---
 
-## Convenciones
+## Decisiones de producto
 
-- **Idioma**: la app es **en español** (público objetivo 100% ES). El código y los commits pueden estar en inglés.
-- **Commits**: [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`).
-- **Branch principal**: `main`. Trabajo en ramas `feat/*` con PR.
-- **Formato**: Prettier + ESLint.
-- **Tipado**: TypeScript estricto (`strict: true`).
-
----
-
-## Licencia
-
-Por definir. Propuesta: **MIT** para el código; el contenido del programa oficial es de dominio público (BOE).
+- **Idioma**: la app es 100% en español y usa el vocabulario del opositor —cantar,
+  vueltas, arrastre, oxidado, preparador, dictamen, bombo—. El código está en
+  inglés donde es convención (`useMemo`, `props`) y en español en el dominio
+  (`Cante`, `ProgresoTema`, `riesgo`), que es donde importa la claridad.
+- **Tonos claros**: el opositor estudia de día en una mesa con flexo y usa la app en
+  ráfagas de dos minutos entre cantes. Papel cálido, salvia, cero estridencia.
+- **Nada de gamificación infantil**: los hitos van en números romanos y miden
+  trabajo real. Un jurista que estudia 10 horas al día no quiere confeti.
+- **Commits**: [Conventional Commits](https://www.conventionalcommits.org/).
+- El programa precargado procede de fuentes públicas (BOE) y es editable por el
+  usuario.
 
 ---
 
