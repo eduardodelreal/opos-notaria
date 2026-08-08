@@ -19,7 +19,7 @@ agradece.
 
 Esto crea:
 
-- Tablas `perfiles`, `temas_usuario`, `progreso`, `cantes`, `sesiones`, `tareas`, `simulacros`.
+- Tablas `perfiles`, `bloques`, `temas`, `progreso`, `cantes`, `sesiones`, `tareas`, `simulacros`.
 - **RLS activado** en todas: cada usuario solo ve sus filas.
 - Trigger que crea el perfil al registrarse.
 - Bucket privado `cantes` para los audios, con políticas por carpeta de usuario.
@@ -97,7 +97,7 @@ netlify deploy --build --prod
 
 ## 3 · Crear tu usuario de prueba
 
-Con datos de ejemplo (recomendado para ver la app viva desde el primer segundo):
+Crea tu cuenta **vacía**, que es como debe empezar la app:
 
 ```bash
 SUPABASE_URL="https://xxxxxxxx.supabase.co" \
@@ -107,16 +107,20 @@ DEMO_PASSWORD="UnaClaveSegura123" \
 node scripts/seed-demo.mjs
 ```
 
-Siembra un perfil de opositor de segundo año: ~200 temas con progreso, ~530 cantes
-con notas que mejoran con el tiempo, ~750 h de estudio, temas oxidados, 6 tareas
-recurrentes (incluido el día de preparador) y 2 simulacros.
+Al entrar, la pantalla de bienvenida te pedirá nombre, oposición, convocatoria y
+ritmo, y ya podrás crear tus materias y meter tus primeros temas.
 
 Variantes:
 
 ```bash
-RESET=1 ... node scripts/seed-demo.mjs   # borra sus datos antes de sembrar
-VACIO=1 ... node scripts/seed-demo.mjs   # crea el usuario sin datos de ejemplo
+DEMO=1  ... node scripts/seed-demo.mjs   # siembra datos FICTICIOS para ver las
+                                         # pantallas llenas (usa otro email)
+RESET=1 ... node scripts/seed-demo.mjs   # borra sus datos antes de empezar
 ```
+
+> `DEMO=1` inventa ~530 cantes y ~750 h de estudio. Sirve para hacerte una idea de
+> cómo se ve la app con recorrido, pero no lo lances sobre tu cuenta real: acabarías
+> con métricas mezcladas y sin saber cuáles son tuyas.
 
 El script es idempotente: si el email ya existe, actualiza la contraseña y
 resiembra en lugar de fallar.
@@ -130,6 +134,8 @@ resiembra en lugar de fallar.
 | La app carga | Abre la URL de Netlify | Mira el *deploy log* en Netlify |
 | Hay backend | Ajustes → debe decir «Supabase», no «Local» | Faltan las `VITE_*` o falta rebuild |
 | Login funciona | Entra con el usuario del seed | Revisa `Site URL` y `Redirect URLs` en Supabase |
+| Bienvenida sale | Al primer login pide nombre y ritmo | Si no sale, ese usuario ya tenía `configurado: true` |
+| Temario propio | Temario → «Pegar lista» y pega 3 líneas | Comprueba que existen las tablas `bloques` y `temas` |
 | Rutas directas | Abre `TU-SITIO/metricas` en una pestaña nueva | Falta el redirect SPA de `netlify.toml` |
 | RLS activo | SQL Editor: `select * from progreso;` con la anon key debe devolver solo lo tuyo | Reejecuta la migración |
 | Micrófono | Cantar → «Empezar el cante» | Necesita HTTPS (Netlify ya lo da) y permiso del navegador |

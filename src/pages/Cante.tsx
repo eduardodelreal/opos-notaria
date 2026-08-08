@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '@/store/AppStore'
-import { BLOQUE_MAP, BLOQUES } from '@/data/programa'
+import { bloqueDe, mapaBloques, ordenarBloques } from '@/lib/bloques'
 import {
   CALIFICACIONES,
   ESTADOS,
@@ -14,7 +14,7 @@ import { fmtDuracion, fmtRelativo, hoy } from '@/lib/dates'
 import { cn, colorNota, barajar } from '@/lib/utils'
 import { iniciarGrabacion, mimeSoportado, type Grabadora } from '@/lib/audio'
 import { Campo, Card, Chip, Modal, Select, Vacio } from '@/components/ui'
-import type { Calificacion, Tema } from '@/lib/types'
+import type { Block, Calificacion, Tema } from '@/lib/types'
 import { uid } from '@/lib/utils'
 
 type Fase = 'seleccion' | 'cantando' | 'valoracion'
@@ -33,6 +33,7 @@ export function Cante() {
   const [duracionesSim, setDuracionesSim] = useState<number[]>([])
 
   const mapaTemas = useMemo(() => new Map(temas.map((t) => [t.id, t])), [temas])
+  const mapaB = useMemo(() => mapaBloques(data.bloques), [data.bloques])
   const temaActual = cola[indice] ? mapaTemas.get(cola[indice]) : undefined
 
   /**
@@ -138,6 +139,7 @@ export function Cante() {
     return (
       <Cronometro
         tema={temaActual}
+        bloque={bloqueDe(mapaB, temaActual.bloque)}
         objetivo={ajustes.objetivoCanteSegundos}
         grabar={ajustes.grabarAudio}
         avisoSonoro={ajustes.avisoSonoro}
@@ -158,6 +160,7 @@ export function Cante() {
     return (
       <Valoracion
         tema={temaActual}
+        bloque={bloqueDe(mapaB, temaActual.bloque)}
         duracion={ultimaDuracion}
         objetivo={ajustes.objetivoCanteSegundos}
         tieneAudio={!!ultimoAudio}
@@ -170,6 +173,7 @@ export function Cante() {
   return (
     <Selector
       temas={temas}
+      bloques={data.bloques}
       progreso={progreso}
       objetivoSegundos={ajustes.objetivoCanteSegundos}
       temasPorEjercicio={ajustes.temasPorEjercicio}
@@ -185,6 +189,7 @@ export function Cante() {
 
 function Selector({
   temas,
+  bloques,
   progreso,
   objetivoSegundos,
   temasPorEjercicio,
@@ -192,6 +197,7 @@ function Selector({
   onIrABombo,
 }: {
   temas: Tema[]
+  bloques: Block[]
   progreso: Record<string, ReturnType<typeof progresoVacio>>
   objetivoSegundos: number
   temasPorEjercicio: number
@@ -204,6 +210,8 @@ function Selector({
   const h = hoy()
 
   const activos = useMemo(() => temas.filter((t) => !t.excluido), [temas])
+  const mapaB = useMemo(() => mapaBloques(bloques), [bloques])
+  const bloquesOrd = useMemo(() => ordenarBloques(bloques), [bloques])
 
   const lista = useMemo(() => {
     const q = busca.trim().toLowerCase()
@@ -223,6 +231,28 @@ function Selector({
       .sort((a, b) => b.r - a.r)
       .slice(0, 60)
   }, [activos, bloque, busca, progreso, h])
+
+  if (activos.length === 0) {
+    return (
+      <div className="space-y-6">
+        <header>
+          <h1 className="font-serif text-[30px] leading-tight">Cantar</h1>
+        </header>
+        <Card>
+          <Vacio
+            icono="◗"
+            titulo="Todavía no hay temas que cantar"
+            texto="Añade los temas que te vayan dando en la academia y aparecerán aquí. Con uno solo ya puedes probar el cronómetro y la grabación."
+            accion={
+              <a href="/temario" className="btn-primary btn-sm">
+                Añadir temas
+              </a>
+            }
+          />
+        </Card>
+      </div>
+    )
+  }
 
   const lanzarSimulacro = () => {
     // Bombo rápido: temas ponderados por riesgo, como en el examen real donde
@@ -318,8 +348,8 @@ function Selector({
               value={bloque}
               onChange={setBloque}
               opciones={[
-                { valor: 'todos', etiqueta: 'Todos los bloques' },
-                ...BLOQUES.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
+                { valor: 'todos', etiqueta: 'Todas las materias' },
+                ...bloquesOrd.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
               ]}
             />
             {modo === 'bloque' && (
@@ -339,7 +369,7 @@ function Selector({
             ) : (
               <ul className="divide-y divide-ink-100">
                 {lista.map(({ tema, p, r }) => {
-                  const b = BLOQUE_MAP[tema.bloque]
+                  const b = bloqueDe(mapaB, tema.bloque)
                   const est = ESTADOS[p.estado]
                   return (
                     <li key={tema.id}>
@@ -452,6 +482,7 @@ function BotonModo({
 
 function Cronometro({
   tema,
+  bloque,
   objetivo,
   grabar,
   avisoSonoro,
@@ -462,6 +493,7 @@ function Cronometro({
   onAbandonar,
 }: {
   tema: Tema
+  bloque: Block
   objetivo: number
   grabar: boolean
   avisoSonoro: boolean
@@ -482,7 +514,6 @@ function Cronometro({
   const wakeLock = useRef<WakeLockSentinel | null>(null)
   const avisado = useRef<Set<number>>(new Set())
 
-  const bloque = BLOQUE_MAP[tema.bloque]
 
   /* Tick del cronómetro basado en timestamps: inmune a los throttles de pestaña. */
   useEffect(() => {
@@ -804,6 +835,7 @@ function pitido(hz: number, dur: number) {
 
 function Valoracion({
   tema,
+  bloque,
   duracion,
   objetivo,
   tieneAudio,
@@ -811,6 +843,7 @@ function Valoracion({
   onGuardar,
 }: {
   tema: Tema
+  bloque: Block
   duracion: number
   objetivo: number
   tieneAudio: boolean
@@ -831,7 +864,6 @@ function Valoracion({
   const tiempo = evaluarTiempo(duracion, objetivo)
   const notaPrevista =
     calificacion == null ? null : calcularNota(calificacion, duracion, objetivo, lagunas)
-  const bloque = BLOQUE_MAP[tema.bloque]
 
   return (
     <div className="mx-auto max-w-xl space-y-5 animate-slide-up">

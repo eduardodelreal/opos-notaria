@@ -20,6 +20,7 @@ import { uid } from '@/lib/utils'
 import type {
   Ajustes,
   AppData,
+  Block,
   Calificacion,
   Cante,
   ProgresoTema,
@@ -74,7 +75,14 @@ interface AppStore {
   alternarOcurrencia(tareaId: string, fecha: string): Promise<void>
   saltarOcurrencia(tareaId: string, fecha: string): Promise<void>
   guardarTema(t: Tema): Promise<void>
+  /** Alta masiva: pegar un temario entero de la academia. */
+  guardarTemas(ts: Tema[]): Promise<void>
   borrarTema(id: string): Promise<void>
+  guardarBloque(b: Block): Promise<void>
+  guardarBloques(bs: Block[]): Promise<void>
+  borrarBloque(id: string): Promise<void>
+  /** Carga una plantilla opcional (materias + temas) sin tocar lo que ya haya. */
+  importarPlantilla(bloques: Block[], temas: Tema[]): Promise<void>
   guardarSimulacro(s: Simulacro): Promise<void>
   botonDePanico(fecha: string): Promise<number>
   marcarDiaCumplido(fecha?: string): Promise<void>
@@ -465,6 +473,90 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [persistir],
   )
 
+  const guardarTemas: AppStore['guardarTemas'] = useCallback(
+    async (ts) => {
+      if (!ts.length) return
+      setData((d) => {
+        const idx = new Map(d.temas.map((t, i) => [t.id, i]))
+        const temas = [...d.temas]
+        for (const t of ts) {
+          const i = idx.get(t.id)
+          if (i != null) temas[i] = t
+          else temas.push(t)
+        }
+        return { ...d, temas }
+      })
+      await persistir((r) => r.upsertTemas(ts))
+    },
+    [persistir],
+  )
+
+  const guardarBloque: AppStore['guardarBloque'] = useCallback(
+    async (b) => {
+      setData((d) => {
+        const i = d.bloques.findIndex((x) => x.id === b.id)
+        const bloques = i >= 0 ? d.bloques.map((x) => (x.id === b.id ? b : x)) : [...d.bloques, b]
+        return { ...d, bloques }
+      })
+      await persistir((r) => r.upsertBloque(b))
+    },
+    [persistir],
+  )
+
+  const guardarBloques: AppStore['guardarBloques'] = useCallback(
+    async (bs) => {
+      if (!bs.length) return
+      setData((d) => {
+        const bloques = [...d.bloques]
+        for (const b of bs) {
+          const i = bloques.findIndex((x) => x.id === b.id)
+          if (i >= 0) bloques[i] = b
+          else bloques.push(b)
+        }
+        return { ...d, bloques }
+      })
+      await persistir((r) => r.upsertBloques(bs))
+    },
+    [persistir],
+  )
+
+  const borrarBloque: AppStore['borrarBloque'] = useCallback(
+    async (id) => {
+      setData((d) => {
+        const caen = d.temas.filter((t) => t.bloque === id).map((t) => t.id)
+        const progreso = { ...d.progreso }
+        for (const t of caen) delete progreso[t]
+        return {
+          ...d,
+          bloques: d.bloques.filter((b) => b.id !== id),
+          temas: d.temas.filter((t) => t.bloque !== id),
+          progreso,
+        }
+      })
+      await persistir((r) => r.deleteBloque(id))
+    },
+    [persistir],
+  )
+
+  const importarPlantilla: AppStore['importarPlantilla'] = useCallback(
+    async (bloques, temas) => {
+      setData((d) => {
+        const idsB = new Set(d.bloques.map((b) => b.id))
+        const idsT = new Set(d.temas.map((t) => t.id))
+        return {
+          ...d,
+          bloques: [...d.bloques, ...bloques.filter((b) => !idsB.has(b.id))],
+          temas: [...d.temas, ...temas.filter((t) => !idsT.has(t.id))],
+        }
+      })
+      await persistir(async (r) => {
+        await r.upsertBloques(bloques)
+        await r.upsertTemas(temas)
+      })
+    },
+    [persistir],
+  )
+
   const borrarTema: AppStore['borrarTema'] = useCallback(
     async (id) => {
       setData((d) => {
@@ -607,7 +699,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       alternarOcurrencia,
       saltarOcurrencia,
       guardarTema,
+      guardarTemas,
       borrarTema,
+      guardarBloque,
+      guardarBloques,
+      borrarBloque,
+      importarPlantilla,
       guardarSimulacro,
       botonDePanico,
       marcarDiaCumplido,
@@ -645,7 +742,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       alternarOcurrencia,
       saltarOcurrencia,
       guardarTema,
+      guardarTemas,
       borrarTema,
+      guardarBloque,
+      guardarBloques,
+      borrarBloque,
+      importarPlantilla,
       guardarSimulacro,
       botonDePanico,
       marcarDiaCumplido,

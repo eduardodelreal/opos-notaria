@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '@/store/AppStore'
-import { BLOQUES, BLOQUE_MAP } from '@/data/programa'
+import { bloqueDe, mapaBloques, ordenarBloques, PALETA } from '@/lib/bloques'
 import { progresoVacio, riesgo, ESTADOS } from '@/lib/srs'
 import { barajar, cn } from '@/lib/utils'
 import { hoy } from '@/lib/dates'
@@ -16,6 +16,8 @@ export function Bombo() {
   const { data } = useApp()
   const nav = useNavigate()
   const { temas, progreso, ajustes } = data
+  const mapaB = useMemo(() => mapaBloques(data.bloques), [data.bloques])
+  const bloquesOrd = useMemo(() => ordenarBloques(data.bloques), [data.bloques])
   const h = hoy()
 
   const [cuantas, setCuantas] = useState(ajustes.temasPorEjercicio)
@@ -104,7 +106,7 @@ export function Bombo() {
                 {Array.from({ length: 14 }, (_, i) => {
                   const ang = (i / 14) * Math.PI * 2
                   const r = 52 + (i % 3) * 9
-                  const b = BLOQUES[i % BLOQUES.length]
+                  const b = bloquesOrd[i % bloquesOrd.length] ?? PALETA[i % PALETA.length]
                   return (
                     <span
                       key={i}
@@ -121,7 +123,7 @@ export function Bombo() {
               </div>
               {!girando && salidas.length === 0 && (
                 <span className="absolute font-serif text-[15px] text-ink-400">
-                  {elegibles.length} bolas
+                  {elegibles.length} {elegibles.length === 1 ? 'bola' : 'bolas'}
                 </span>
               )}
             </div>
@@ -129,19 +131,35 @@ export function Bombo() {
             <div className="mx-auto -mt-2 h-6 w-16 rounded-b-2xl border-x-4 border-b-4 border-ink-100 bg-canvas" />
           </div>
 
-          <button
-            onClick={sortear}
-            disabled={girando || elegibles.length === 0}
-            className="btn-primary mt-8 px-8 py-3.5 text-[15px]"
-          >
-            {girando ? 'Girando…' : salidas.length ? 'Volver a sortear' : 'Sortear temas'}
-          </button>
+          {elegibles.length === 0 ? (
+            <div className="mt-8 max-w-sm text-center">
+              <p className="text-[13.5px] font-semibold text-ink-700">El bombo está vacío</p>
+              <p className="mt-1 text-[12.5px] leading-snug text-ink-500">
+                {temas.length === 0
+                  ? 'Añade temas a tu temario y podrás sortearlos como en el ejercicio real.'
+                  : 'Ningún tema cumple los filtros del sorteo. Prueba a quitar la restricción de materia o el «solo temas ya tocados».'}
+              </p>
+              {temas.length === 0 && (
+                <button onClick={() => nav('/temario')} className="btn-primary btn-sm mt-4">
+                  Añadir temas
+                </button>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={sortear}
+              disabled={girando}
+              className="btn-primary mt-8 px-8 py-3.5 text-[15px]"
+            >
+              {girando ? 'Girando…' : salidas.length ? 'Volver a sortear' : 'Sortear temas'}
+            </button>
+          )}
 
           {/* Bolas que han salido */}
           {temasSalidos.length > 0 && (
             <div className="mt-9 w-full space-y-2.5">
               {temasSalidos.map((t, i) => {
-                const b = BLOQUE_MAP[t.bloque]
+                const b = bloqueDe(mapaB, t.bloque)
                 const p = progreso[t.id] ?? progresoVacio(t.id)
                 const est = ESTADOS[p.estado]
                 const visible = i < reveladas
@@ -235,7 +253,7 @@ export function Bombo() {
                   onChange={(v) => setBloque(v as 'todos' | BlockId)}
                   opciones={[
                     { valor: 'todos', etiqueta: 'Todo el programa' },
-                    ...BLOQUES.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
+                    ...bloquesOrd.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
                   ]}
                 />
               </div>

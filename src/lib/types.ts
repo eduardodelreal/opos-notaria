@@ -1,35 +1,39 @@
 /** Modelo de dominio de la app. Vocabulario del opositor, no genérico. */
 
-export type BlockId =
-  | 'civil'
-  | 'mercantil'
-  | 'hipotecario'
-  | 'notarial'
-  | 'fiscal'
-  | 'admin_procesal'
+/**
+ * Todo el contenido lo crea el opositor: sus materias, sus temas, sus tareas.
+ * La app no trae ningún programa impuesto — en la academia cada preparador
+ * numera y agrupa a su manera, y un catálogo cerrado obligaría a pelearse con
+ * él desde el primer día.
+ */
+
+/** Id de materia. Slug generado a partir del nombre que escriba el usuario. */
+export type BlockId = string
 
 export interface Block {
   id: BlockId
   nombre: string
-  /** Ejercicio del examen en el que entra este bloque (1º o 2º oral). */
-  ejercicio: 1 | 2
+  /** Ejercicio del examen en el que entra esta materia. */
+  ejercicio: 1 | 2 | 3 | 4
   color: string
   colorSoft: string
   colorText: string
+  /** Posición en la lista. */
+  orden: number
 }
 
 export interface Tema {
-  /** Ej. "CIVIL_005" */
   id: string
+  /** Id de la materia a la que pertenece. */
   bloque: BlockId
   numero: number
   titulo: string
-  /** Temas añadidos o editados por el usuario. */
-  custom?: boolean
   /** Marcado como fuera de programa: no cuenta en progreso ni entra en el bombo. */
   excluido?: boolean
   /** Epígrafes opcionales para el modo "cante por epígrafes". */
   epigrafes?: string[]
+  /** Fecha ISO en que se añadió: sirve para ver el ritmo al que crece el programa. */
+  creadoEn?: string
 }
 
 export type EstadoTema =
@@ -135,6 +139,8 @@ export interface Simulacro {
 
 export interface Ajustes {
   nombre: string
+  /** El usuario ya ha pasado por la pantalla de bienvenida. */
+  configurado?: boolean
   oposicion: 'notarias' | 'registros' | 'judicatura'
   fechaInicio: string
   /** Fecha estimada de la convocatoria. */
@@ -164,6 +170,8 @@ export interface Ajustes {
 export interface AppData {
   version: number
   ajustes: Ajustes
+  /** Materias del programa, creadas por el usuario. */
+  bloques: Block[]
   temas: Tema[]
   progreso: Record<string, ProgresoTema>
   cantes: Cante[]

@@ -9,6 +9,7 @@ import { Calendario } from '@/pages/Calendario'
 import { Metricas } from '@/pages/Metricas'
 import { Bombo } from '@/pages/Bombo'
 import { Ajustes } from '@/pages/Ajustes'
+import { Bienvenida } from '@/pages/Bienvenida'
 
 
 function Cargando() {
@@ -34,12 +35,17 @@ function Cargando() {
 }
 
 function Rutas() {
-  const { cargando, session, modoDemo } = useApp()
+  const { cargando, session, modoDemo, data, guardarAjustes } = useApp()
 
   if (cargando) return <Cargando />
 
   // Sin sesión de Supabase solo se entra si el usuario ha elegido el modo local.
   if (!session && !modoDemo) return <Login />
+
+  // Primer arranque: cuatro datos para calibrar la app y a estudiar.
+  if (!data.ajustes.configurado) {
+    return <Bienvenida onListo={() => void guardarAjustes({ configurado: true })} />
+  }
 
   return (
     <Layout>

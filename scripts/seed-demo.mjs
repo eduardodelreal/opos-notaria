@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 /**
- * Crea un usuario de prueba en Supabase y le siembra ~7 meses de estudio
- * realista: primera vuelta de Civil casi cerrada, Mercantil e Hipotecario
- * empezados, temas oxidados, cantes con notas variables, tareas recurrentes
- * y un par de simulacros.
+ * Crea tu usuario en Supabase.
  *
- * Uso:
+ * POR DEFECTO LO CREA VACÍO, que es como debe empezar la app: tú vas metiendo
+ * tus materias, tus temas, tus tareas y tus horas según te los dan en la
+ * academia. La app se construye contigo.
+ *
  *   SUPABASE_URL=https://xxx.supabase.co \
  *   SUPABASE_SERVICE_ROLE_KEY=eyJ... \
  *   DEMO_EMAIL=tu@email.com \
  *   DEMO_PASSWORD='UnaClaveSegura123' \
  *   node scripts/seed-demo.mjs
  *
- * Opcional:
- *   RESET=1     borra los datos previos de ese usuario antes de sembrar
- *   VACIO=1     crea el usuario sin datos de ejemplo
+ * Opcionales:
+ *   DEMO=1      además, siembra ~7 meses de estudio FICTICIO para ver todas las
+ *               pantallas llenas. Úsalo en una cuenta aparte, no en la tuya de
+ *               verdad: mezclarías datos inventados con los reales.
+ *   RESET=1     borra todos los datos previos de ese usuario antes de empezar.
  *
  * La service role key salta RLS: úsala solo en local, nunca en el navegador
  * ni en variables de Netlify con prefijo VITE_.
@@ -27,7 +29,8 @@ const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const EMAIL = process.env.DEMO_EMAIL
 const PASSWORD = process.env.DEMO_PASSWORD
 const RESET = process.env.RESET === '1'
-const VACIO = process.env.VACIO === '1'
+// Vacío por defecto. DEMO=1 es la excepción, no la norma.
+const CON_DEMO = process.env.DEMO === '1'
 
 if (!URL || !KEY || !EMAIL || !PASSWORD) {
   console.error(
@@ -38,17 +41,23 @@ if (!URL || !KEY || !EMAIL || !PASSWORD) {
 
 const sb = createClient(URL, KEY, { auth: { persistSession: false } })
 
-/* Debe coincidir con src/data/programa.ts */
+/* Materias del set de demostración. En una cuenta real las crea el usuario. */
 const BLOQUES = [
-  { id: 'civil', prefijo: 'CIVIL', total: 145 },
-  { id: 'mercantil', prefijo: 'MERC', total: 60 },
-  { id: 'hipotecario', prefijo: 'HIPO', total: 45 },
-  { id: 'notarial', prefijo: 'NOT', total: 35 },
-  { id: 'fiscal', prefijo: 'FISC', total: 25 },
-  { id: 'admin_procesal', prefijo: 'ADM', total: 18 },
+  { id: 'civil', nombre: 'Civil', ejercicio: 1, total: 145,
+    color: '#517C5E', soft: '#DFE8E1', text: '#293F30' },
+  { id: 'mercantil', nombre: 'Mercantil', ejercicio: 2, total: 60,
+    color: '#556296', soft: '#DFE3F1', text: '#434D77' },
+  { id: 'hipotecario', nombre: 'Hipotecario', ejercicio: 2, total: 45,
+    color: '#B45F42', soft: '#F6E2D9', text: '#934A32' },
+  { id: 'notarial', nombre: 'Notarial', ejercicio: 2, total: 35,
+    color: '#A6832B', soft: '#F5EACB', text: '#7A5F1C' },
+  { id: 'fiscal', nombre: 'Fiscal', ejercicio: 2, total: 25,
+    color: '#4A7C7C', soft: '#D9EAEA', text: '#2F5555' },
+  { id: 'admin-procesal', nombre: 'Admin. y Procesal', ejercicio: 1, total: 18,
+    color: '#7A6A8A', soft: '#E9E3F0', text: '#544766' },
 ]
 
-const temaId = (prefijo, n) => `${prefijo}_${String(n).padStart(3, '0')}`
+const temaId = (bloqueId, n) => `${bloqueId}_${String(n).padStart(3, '0')}`
 const iso = (d) => d.toISOString().slice(0, 10)
 const addDays = (d, n) => new Date(d.getTime() + n * 86400000)
 const rnd = (a, b) => a + Math.random() * (b - a)
@@ -98,7 +107,7 @@ const PLAN = {
   hipotecario: { tocados: 28, dominados: 3, vueltasMax: 3 },
   notarial: { tocados: 11, dominados: 0, vueltasMax: 2 },
   fiscal: { tocados: 4, dominados: 0, vueltasMax: 1 },
-  admin_procesal: { tocados: 0, dominados: 0, vueltasMax: 0 },
+  'admin-procesal': { tocados: 0, dominados: 0, vueltasMax: 0 },
 }
 
 const ESCALONES = [1, 3, 7, 14, 25, 40, 60, 90, 130, 180]
@@ -115,6 +124,16 @@ function calcularNota(calificacion, duracion, objetivo, lagunas) {
 }
 
 function construir() {
+  const bloquesFilas = BLOQUES.map((b, i) => ({
+    bloque_id: b.id,
+    nombre: b.nombre,
+    ejercicio: b.ejercicio,
+    color: b.color,
+    color_soft: b.soft,
+    color_text: b.text,
+    orden: i,
+  }))
+  const temasFilas = []
   const progreso = []
   const cantes = []
   const sesiones = []
@@ -122,9 +141,20 @@ function construir() {
   let contador = 0
 
   for (const b of BLOQUES) {
-    const plan = PLAN[b.id]
+    const plan = PLAN[b.id] ?? { tocados: 0, dominados: 0, vueltasMax: 0 }
+    // El set de demo crea la materia entera; solo una parte tiene progreso.
+    for (let n = 1; n <= b.total; n++) {
+      temasFilas.push({
+        tema_id: temaId(b.id, n),
+        bloque_id: b.id,
+        numero: n,
+        titulo: `${b.nombre} · tema ${n}`,
+        excluido: false,
+        epigrafes: null,
+      })
+    }
     for (let n = 1; n <= plan.tocados; n++) {
-      const id = temaId(b.prefijo, n)
+      const id = temaId(b.id, n)
       const esDominado = n <= plan.dominados
       const vueltas = esDominado
         ? rndInt(3, plan.vueltasMax)
@@ -361,7 +391,16 @@ function construir() {
     if (!diasCumplidos.includes(f)) diasCumplidos.push(f)
   }
 
-  return { progreso, cantes, sesiones, tareas, simulacros, diasCumplidos: diasCumplidos.sort() }
+  return {
+    bloques: bloquesFilas,
+    temas: temasFilas,
+    progreso,
+    cantes,
+    sesiones,
+    tareas,
+    simulacros,
+    diasCumplidos: diasCumplidos.sort(),
+  }
 }
 
 /* ------------------------------------------------------------- 3. inserta -- */
@@ -379,15 +418,17 @@ async function main() {
   const userId = await obtenerOCrearUsuario()
 
   if (RESET) {
-    for (const t of ['cantes', 'sesiones', 'tareas', 'simulacros', 'progreso', 'temas_usuario']) {
+    for (const t of ['cantes', 'sesiones', 'tareas', 'simulacros', 'progreso', 'temas', 'bloques']) {
       const { error } = await sb.from(t).delete().eq('user_id', userId)
       if (error) throw new Error(`limpiando ${t}: ${error.message}`)
     }
     console.log('· Datos anteriores borrados')
   }
 
-  const ajustes = {
+  const ajustes = CON_DEMO
+    ? {
     nombre: 'Eduardo',
+    configurado: true,
     oposicion: 'notarias',
     fechaInicio: iso(addDays(HOY, -680)),
     fechaExamen: iso(addDays(HOY, 240)),
@@ -404,15 +445,23 @@ async function main() {
     modoCiegoPorDefecto: false,
     factorSrs: 1,
     umbralOxido: 75,
-  }
+      }
+    : // Cuenta real: en blanco. La pantalla de bienvenida pedirá los cuatro
+      // datos que hacen falta y a partir de ahí manda el usuario.
+      {}
 
-  if (VACIO) {
+  if (!CON_DEMO) {
     const { error } = await sb
       .from('perfiles')
       .upsert({ id: userId, ajustes, dias_cumplidos: [], logros: [] })
     if (error) throw error
-    console.log('\n✓ Usuario listo, sin datos de ejemplo.')
-    console.log(`  Email: ${EMAIL}\n  Contraseña: ${PASSWORD}`)
+    console.log('\n✓ Usuario listo y vacío, como debe ser.')
+    console.log(`  Email:      ${EMAIL}`)
+    console.log(`  Contraseña: ${PASSWORD}`)
+    console.log('\n  Al entrar te pedirá cuatro datos (nombre, oposición, convocatoria y ritmo)')
+    console.log('  y ya podrás empezar a meter tus materias y tus temas.')
+    console.log('\n  ¿Quieres ver la app llena para hacerte una idea? Repite con DEMO=1')
+    console.log('  y otro email, para no mezclar datos inventados con los tuyos.')
     return
   }
 
@@ -427,6 +476,8 @@ async function main() {
   if (errPerfil) throw errPerfil
   console.log('· perfiles: 1 fila')
 
+  await insertarPorLotes('bloques', d.bloques, userId)
+  await insertarPorLotes('temas', d.temas, userId)
   await insertarPorLotes('progreso', d.progreso, userId)
   await insertarPorLotes('cantes', d.cantes, userId)
   await insertarPorLotes('sesiones', d.sesiones, userId)
@@ -434,13 +485,13 @@ async function main() {
   await insertarPorLotes('simulacros', d.simulacros, userId)
 
   const horas = Math.round(d.sesiones.reduce((a, s) => a + s.minutos, 0) / 60)
-  console.log('\n✓ Usuario de prueba listo.')
+  console.log('\n✓ Usuario de DEMOSTRACIÓN listo (datos inventados).')
   console.log(`  Email:      ${EMAIL}`)
   console.log(`  Contraseña: ${PASSWORD}`)
   console.log(
-    `  Sembrado:   ${d.progreso.length} temas con progreso · ${d.cantes.length} cantes · ${horas} h de estudio · ${d.tareas.length} tareas`,
+    `  Sembrado:   ${d.temas.length} temas (${d.progreso.length} con progreso) · ${d.cantes.length} cantes · ${horas} h · ${d.tareas.length} tareas`,
   )
-  console.log('\n  Entra en la app y verás el panel con datos reales desde el primer segundo.')
+  console.log('\n  Ojo: son datos ficticios, para ver cómo se comportan las pantallas llenas.')
 }
 
 main().catch((e) => {

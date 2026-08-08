@@ -1,66 +1,17 @@
-import type { Block, BlockId, Tema } from '@/lib/types'
+import type { Block, Tema } from '@/lib/types'
+import { crearBloque } from '@/lib/bloques'
+import { hoy } from '@/lib/dates'
 
 /**
- * Programa de la oposición a Notarías, agrupado por bloques.
- * 328 temas. Editable por el usuario desde Ajustes → Temario
- * (puede añadir, renombrar o excluir temas para adaptarlo a su convocatoria).
+ * PLANTILLAS OPCIONALES.
+ *
+ * La app arranca VACÍA: el opositor añade sus materias y sus temas según se los
+ * van dando en la academia. Esto es solo un atajo para quien prefiera cargar de
+ * golpe el programa oficial y luego editarlo, borrarlo o renumerarlo a su gusto.
+ *
+ * Nada de esto se aplica solo. Se importa desde Ajustes → Temario, o desde la
+ * pantalla de bienvenida, y a partir de ahí los temas son suyos.
  */
-
-export const BLOQUES: Block[] = [
-  {
-    id: 'civil',
-    nombre: 'Civil',
-    ejercicio: 1,
-    color: '#517C5E',
-    colorSoft: '#DFE8E1',
-    colorText: '#293F30',
-  },
-  {
-    id: 'mercantil',
-    nombre: 'Mercantil',
-    ejercicio: 2,
-    color: '#556296',
-    colorSoft: '#DFE3F1',
-    colorText: '#434D77',
-  },
-  {
-    id: 'hipotecario',
-    nombre: 'Hipotecario',
-    ejercicio: 2,
-    color: '#B45F42',
-    colorSoft: '#F6E2D9',
-    colorText: '#934A32',
-  },
-  {
-    id: 'notarial',
-    nombre: 'Notarial',
-    ejercicio: 2,
-    color: '#A6832B',
-    colorSoft: '#F5EACB',
-    colorText: '#7A5F1C',
-  },
-  {
-    id: 'fiscal',
-    nombre: 'Fiscal',
-    ejercicio: 2,
-    color: '#4A7C7C',
-    colorSoft: '#D9EAEA',
-    colorText: '#2F5555',
-  },
-  {
-    id: 'admin_procesal',
-    nombre: 'Admin. y Procesal',
-    ejercicio: 1,
-    color: '#7A6A8A',
-    colorSoft: '#E9E3F0',
-    colorText: '#544766',
-  },
-]
-
-export const BLOQUE_MAP: Record<BlockId, Block> = BLOQUES.reduce(
-  (acc, b) => ({ ...acc, [b.id]: b }),
-  {} as Record<BlockId, Block>,
-)
 
 const CIVIL = [
   'El Derecho civil español. La codificación. El Código Civil: estructura y contenido.',
@@ -408,31 +359,78 @@ const ADMIN_PROCESAL = [
   'Nociones de Derecho penal. Delitos societarios, falsedades y estafa.',
 ]
 
-const PREFIJOS: Record<BlockId, string> = {
-  civil: 'CIVIL',
-  mercantil: 'MERC',
-  hipotecario: 'HIPO',
-  notarial: 'NOT',
-  fiscal: 'FISC',
-  admin_procesal: 'ADM',
+export interface Plantilla {
+  id: string
+  nombre: string
+  desc: string
+  materias: { nombre: string; ejercicio: 1 | 2 | 3 | 4; titulos: string[] }[]
 }
 
-function build(bloque: BlockId, titulos: string[]): Tema[] {
-  return titulos.map((titulo, i) => ({
-    id: `${PREFIJOS[bloque]}_${String(i + 1).padStart(3, '0')}`,
-    bloque,
-    numero: i + 1,
-    titulo,
-  }))
-}
-
-export const PROGRAMA: Tema[] = [
-  ...build('civil', CIVIL),
-  ...build('mercantil', MERCANTIL),
-  ...build('hipotecario', HIPOTECARIO),
-  ...build('notarial', NOTARIAL),
-  ...build('fiscal', FISCAL),
-  ...build('admin_procesal', ADMIN_PROCESAL),
+export const PLANTILLAS: Plantilla[] = [
+  {
+    id: 'notarias_2021',
+    nombre: 'Programa de Notarías',
+    desc: '328 temas en 6 materias, según el programa publicado en el BOE. Edítalo después a tu gusto.',
+    materias: [
+      { nombre: 'Civil', ejercicio: 1, titulos: CIVIL },
+      { nombre: 'Mercantil', ejercicio: 2, titulos: MERCANTIL },
+      { nombre: 'Hipotecario', ejercicio: 2, titulos: HIPOTECARIO },
+      { nombre: 'Notarial', ejercicio: 2, titulos: NOTARIAL },
+      { nombre: 'Fiscal', ejercicio: 2, titulos: FISCAL },
+      { nombre: 'Admin. y Procesal', ejercicio: 1, titulos: ADMIN_PROCESAL },
+    ],
+  },
+  {
+    id: 'solo_materias',
+    nombre: 'Solo las materias, sin temas',
+    desc: 'Crea las 6 materias de Notarías vacías. Tú vas metiendo los temas según te los den.',
+    materias: [
+      { nombre: 'Civil', ejercicio: 1, titulos: [] },
+      { nombre: 'Mercantil', ejercicio: 2, titulos: [] },
+      { nombre: 'Hipotecario', ejercicio: 2, titulos: [] },
+      { nombre: 'Notarial', ejercicio: 2, titulos: [] },
+      { nombre: 'Fiscal', ejercicio: 2, titulos: [] },
+      { nombre: 'Admin. y Procesal', ejercicio: 1, titulos: [] },
+    ],
+  },
 ]
 
-export const TOTAL_TEMAS = PROGRAMA.length
+/**
+ * Convierte una plantilla en materias y temas listos para guardar, respetando
+ * las materias que el usuario ya tenga (no duplica ni renombra nada suyo).
+ */
+export function materializar(
+  plantilla: Plantilla,
+  bloquesExistentes: Block[],
+): { bloques: Block[]; temas: Tema[] } {
+  const bloques: Block[] = []
+  const temas: Tema[] = []
+  const acumulado = [...bloquesExistentes]
+  const fecha = hoy()
+
+  for (const m of plantilla.materias) {
+    const yaExiste = acumulado.find(
+      (b) => b.nombre.toLowerCase() === m.nombre.toLowerCase(),
+    )
+    const bloque = yaExiste ?? crearBloque(m.nombre, acumulado, { ejercicio: m.ejercicio })
+    if (!yaExiste) {
+      acumulado.push(bloque)
+      bloques.push(bloque)
+    }
+    m.titulos.forEach((titulo, i) => {
+      temas.push({
+        id: `${bloque.id}_${String(i + 1).padStart(3, '0')}`,
+        bloque: bloque.id,
+        numero: i + 1,
+        titulo,
+        creadoEn: fecha,
+      })
+    })
+  }
+
+  return { bloques, temas }
+}
+
+export function contarTemas(p: Plantilla): number {
+  return p.materias.reduce((a, m) => a + m.titulos.length, 0)
+}

@@ -14,7 +14,7 @@ llegar al tribunal sabiéndose 328 temas, no entra.**
 |---|---------|----------------------|----------|--------|
 | 1 | **Cante cronometrado con nota automática** | «Creo que voy bien de tiempo» no es un dato. El tribunal te corta a los 12 minutos y nadie mide eso en casa. | M | ✅ |
 | 2 | **Sistema de vueltas (SRS de temas, no de tarjetas)** | Repasa lo que recuerda que repasó, no lo que toca. Los agujeros aparecen en el examen. | L | ✅ |
-| 3 | **Temario completo precargado y editable** | Media hora de Excel antes de poder empezar a estudiar. | M | ✅ |
+| 3 | **Temario propio: pegar una lista o meter temas uno a uno** | El temario llega a cuentagotas y cada preparador numera distinto. Con un catálogo cerrado te pasas el primer día traduciendo números. | M | ✅ |
 | 4 | **Panel de "lo que toca hoy" ordenado por riesgo** | Abre el cuaderno y decide con la intuición. La intuición prioriza lo que le gusta. | M | ✅ |
 | 5 | **Grabación del cante vinculada al tema** | Se escucha a sí mismo cero veces. No detecta las muletillas ni los silencios. | M | ✅ |
 | 6 | **Estado por tema con oxidación automática** | «Ese lo tengo» dicho de un tema cantado hace cuatro meses. | S | ✅ |
@@ -43,7 +43,7 @@ llegar al tribunal sabiéndose 328 temas, no entra.**
 | 19 | **Notas por epígrafe con mapa de fallos** | Estructura de datos ya prevista (`epigrafes`), UI pendiente. | M |
 | 20 | **Módulo de dictamen** con casos y corrección | Es media oposición, pero es *otro* producto dentro del producto. | XL |
 | 21 | **App móvil nativa (Expo)** | La web instalable cubre el 90% mientras no haya tracción. | XL |
-| 22 | **Multi-oposición** (Registros, Judicatura) | Solo cambia el catálogo. Ya está preparado el campo. | M |
+| 22 | **Multi-oposición** (Registros, Judicatura) | Ya funciona: como el temario lo crea el usuario, la app no distingue de qué oposición es. | M | ✅ |
 
 ---
 
@@ -79,6 +79,18 @@ sin mejorar el rendimiento. Y una filtración de «voy por el tema 90» daña a 
 en un mundo pequeño donde todos se conocen. Si algún día hay comparación, será
 agregada, anónima y opt-in.
 
+### ❌ Un programa precargado que el opositor no puede tocar
+Esta es la decisión que más cambió el producto. Parecía un regalo traer los 328
+temas hechos, y es justo lo contrario: cada preparador numera distinto, agrupa
+distinto y da el temario a cuentagotas a lo largo de años. Un catálogo cerrado
+obliga a pelearse con la herramienta desde el primer día —«mi tema 47 aquí es el
+52»— y esa fricción se paga en abandono.
+
+Ahora la app **arranca vacía**. El opositor crea sus materias y va metiendo los
+temas según se los dan: pegando la lista del PDF de la academia, o uno a uno con
+`Ctrl+Enter`. El programa oficial existe, pero como **plantilla opcional** que se
+importa desde Ajustes y a partir de ahí es suya y editable.
+
 ### ❌ Temario con contenido nuestro
 No vamos a escribir los 328 temas. Es un producto distinto (editorial), con riesgo
 jurídico, coste enorme y competencia frontal con los preparadores, que son quienes
@@ -100,8 +112,8 @@ El opositor a Notarías ya tiene un método impuesto por su preparador. La app s
 adapta a él, no le enseña a estudiar.
 
 ### ❌ Onboarding de 8 pantallas
-Al primer arranque el programa ya está cargado y se puede cantar un tema en 30
-segundos. El resto se configura desde Ajustes cuando le apetezca.
+Tres pasos saltables (quién eres, tu ritmo, tus materias) y a estudiar. Menos de un
+minuto. El resto se configura desde Ajustes cuando le apetezca.
 
 ### ❌ Modo oscuro como prioridad
 Contra la intuición: el opositor estudia de día en una mesa con flexo, y la app se
@@ -132,7 +144,13 @@ En el resto de apps un cante «perfecto» de 19 minutos sale con un 10. Aquí sa
 un 6,5, y esa es la conversación: *«esta app me ha dicho que voy sobrado de
 contenido y fatal de reloj»*. Es un insight que el opositor no tenía.
 
-### 3. El enlace para el preparador
+### 3. Que la app no te imponga nada
+Todas las apps de estudio llegan con su temario, su método y su cronómetro. Esta
+llega vacía y te pregunta. Suena a menos producto y es justo lo contrario: es la
+diferencia entre una herramienta que usas y una que abandonas en tres semanas
+porque «no encaja con cómo lo lleva mi preparador».
+
+### 4. El enlace para el preparador
 Un notario en activo con 10 minutos libres abre un enlace en el móvil, escucha el
 cante y contesta. Sin cuenta, sin app, sin instalar nada. Cuando el preparador lo
 usa, recomienda la app a sus otros diez opositores. Es el canal de distribución.

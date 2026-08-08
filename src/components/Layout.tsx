@@ -57,6 +57,12 @@ const IconoAjustes = (
   </svg>
 )
 
+const NOMBRE_OPOSICION: Record<string, string> = {
+  notarias: 'Notarías',
+  registros: 'Registros',
+  judicatura: 'Judicatura',
+}
+
 export function Layout({ children }: { children: ReactNode }) {
   const { data, salir, modoLocal, sincronizando, aviso, logrosNuevos, descartarLogros } = useApp()
   const [menuAbierto, setMenuAbierto] = useState(false)
@@ -115,7 +121,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <div>
                 <p className="font-serif text-[17px] leading-none text-ink-900">Cante</p>
                 <p className="mt-0.5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-ink-400">
-                  Notarías
+                  {NOMBRE_OPOSICION[data.ajustes.oposicion]}
                 </p>
               </div>
             </div>

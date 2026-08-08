@@ -4,9 +4,13 @@ Herramienta de precisión para opositores a Notarías: **cronometra los cantes, 
 graba, calcula la nota combinando contenido y tiempo, decide qué toca repasar hoy y
 convierte cinco años de estudio en números que se pueden leer.**
 
-> Estado: **v0.1 funcional**. 328 temas precargados, cante con cronómetro y
-> grabación, sistema de vueltas, calendario con tareas recurrentes, bombo virtual y
-> métricas. Arranca sin backend en modo local.
+**La app arranca vacía.** No trae ningún programa impuesto: tú vas metiendo tus
+materias, tus temas, tus tareas y tus horas según te los van dando en la academia.
+Se construye contigo.
+
+> Estado: **v0.2 funcional**. Cante con cronómetro y grabación, sistema de vueltas,
+> temario propio (uno a uno o pegando la lista), calendario con tareas recurrentes,
+> bombo virtual y métricas. Arranca sin backend en modo local.
 
 ---
 
@@ -49,13 +53,23 @@ El módulo central. Tres modos: **tema único**, **tanda de bloque** o **simulac
 - Al terminar: autocalificación de contenido (1–5), lagunas, si fue ante el
   preparador y notas. La nota final sale de combinar contenido y tiempo.
 
-### Temario
-Los 328 temas por bloque, con estado, vueltas, nota media, próxima revisión y horas
-acumuladas. Filtros por bloque y estado, cuatro órdenes (programa, riesgo, peor
-nota, cantado hace más). Cada tema abre una ficha con su historial de cantes,
-reproductor de audio, notas propias, registro de estudio y **botón para compartir el
-cante con el preparador**. Puedes editar títulos, excluir temas del programa o
-añadir los tuyos.
+### Temario — el tuyo, construido a tu ritmo
+Empieza vacío. Tres formas de llenarlo, y las tres son tuyas:
+
+- **Pegar una lista**: copias el temario del PDF o del WhatsApp de la academia y lo
+  pegas tal cual. El parser entiende `1.`, `Tema 2 -`, `3)`, viñetas y líneas sin
+  numerar (esas las numera seguidas), e ignora cabeceras sueltas.
+- **Uno a uno**, con `Ctrl+Enter` para guardar y dejar el cuadro listo para el
+  siguiente: metes los cinco temas de esta semana sin tocar el ratón.
+- **Plantilla opcional**: si prefieres partir del programa oficial completo (328
+  temas), está en Ajustes. A partir de ahí es tuyo: edítalo, renumera o borra.
+
+**Las materias también las creas tú** (Civil, Mercantil… o las que use tu
+preparador), con su color y su ejercicio. Cada tema lleva estado, vueltas, nota
+media, próxima revisión y horas acumuladas. Filtros por materia y estado, cinco
+órdenes. Cada tema abre una ficha con su historial de cantes, reproductor de audio,
+epígrafes, notas propias, registro de estudio y **botón para compartir el cante con
+el preparador**.
 
 ### Calendario
 Vista de mes, de semana y de series. **Tareas recurrentes de verdad**: diaria cada
@@ -82,22 +96,31 @@ terminar, cantas los temas sorteados seguidos como simulacro.
 ### Ajustes
 Tiempo objetivo por tema, temas por ejercicio, objetivos diarios, día de
 preparador, agresividad del sistema de vueltas (con vista previa de los escalones),
-umbral de oxidación, exportar/importar copia de seguridad en JSON.
+umbral de oxidación, plantillas opcionales de programa y exportar/importar copia de
+seguridad en JSON.
+
+### Primer arranque
+Tres pasos, todos saltables, menos de un minuto: cómo te llamas y qué oposición
+preparas · tu ritmo (horas, cantes al día, minutos por tema) · las materias con las
+que empiezas. Nada de tutorial de ocho pantallas.
 
 ---
 
 ## Por qué no es un Todoist con temas
 
-Cuatro decisiones que cambian todo:
+Cinco decisiones que cambian todo:
 
-1. **La unidad es el tema completo, no la flashcard.** El opositor recita 20 minutos
+1. **El programa lo pone el opositor, no la app.** Cada preparador numera y agrupa a
+   su manera, y el temario llega a cuentagotas a lo largo de años. Un catálogo
+   cerrado obligaría a pelearse con la herramienta desde el primer día.
+2. **La unidad es el tema completo, no la flashcard.** El opositor recita 20 minutos
    seguidos con estructura y citas. Partirlo en tarjetas entrena una habilidad que no
    se examina.
-2. **El tiempo es la mitad de la nota.** Un cante impecable en 19 minutos cuando el
+3. **El tiempo es la mitad de la nota.** Un cante impecable en 19 minutos cuando el
    límite son 12 no es un 10: en el tribunal te cortan. La app lo penaliza.
-3. **Los temas se oxidan solos.** Un tema dominado que llevas 80 días sin cantar
+4. **Los temas se oxidan solos.** Un tema dominado que llevas 80 días sin cantar
    pasa a `oxidado` sin que hagas nada, porque eso es lo que pasa en tu cabeza.
-4. **Fallar no resetea.** Un tema de sexta vuelta que hoy sale flojo retrocede uno o
+5. **Fallar no resetea.** Un tema de sexta vuelta que hoy sale flojo retrocede uno o
    dos escalones, no vuelve al día 1. El coste de un repaso es 12 minutos, no 8
    segundos.
 
@@ -174,12 +197,14 @@ DEMO_PASSWORD="UnaClaveSegura123" \
 node scripts/seed-demo.mjs
 ```
 
-Crea el usuario (con email ya confirmado) y le siembra siete meses de estudio
-realista: ~200 temas con progreso, ~530 cantes con notas que mejoran con el tiempo,
-~750 h de estudio, temas oxidados, seis tareas recurrentes y dos simulacros. Así el
-panel y las métricas se ven vivos desde el primer segundo.
+Crea el usuario con el email ya confirmado y **vacío**, que es como debe empezar la
+app. Al entrar te pedirá cuatro datos en la pantalla de bienvenida y a partir de ahí
+vas metiendo tus materias y tus temas.
 
-`RESET=1` borra sus datos antes de sembrar · `VACIO=1` crea el usuario sin datos.
+- `DEMO=1` — además, siembra siete meses de estudio **ficticio** (~530 cantes, ~750 h,
+  temas oxidados, tareas recurrentes, simulacros) para ver todas las pantallas
+  llenas. Úsalo con **otro email**: no mezcles datos inventados con los reales.
+- `RESET=1` — borra todos los datos previos de ese usuario antes de empezar.
 
 > La `service_role key` salta RLS: úsala solo en tu terminal. Nunca en el repo ni en
 > una variable de Netlify con prefijo `VITE_`.
@@ -191,7 +216,8 @@ panel y las métricas se ven vivos desde el primer segundo.
 | Tabla | Contenido |
 |---|---|
 | `perfiles` | Un registro por usuario: `ajustes` (jsonb), días cumplidos, hitos. |
-| `temas_usuario` | Solo las **diferencias** respecto al catálogo del código: títulos editados, temas excluidos, temas propios. |
+| `bloques` | Las materias que crea el usuario: nombre, color, ejercicio, orden. |
+| `temas` | Los temas del usuario: materia, número, título, epígrafes. |
 | `progreso` | Estado por usuario y tema: estado, vueltas, intervalo, facilidad, último cante, próxima revisión, nota media, minutos. |
 | `cantes` | Cada sesión de cante: duración, objetivo vigente, calificación, nota, lagunas, si fue ante el preparador, ruta del audio. |
 | `sesiones` | Estudio sin cantar: minutos y tipo (lectura, esquema, memorización, dictamen). |
@@ -202,10 +228,10 @@ RLS activo en todas: la política es `auth.uid() = user_id`. Los audios viven en
 bucket privado `cantes`, en la carpeta `<user_id>/`, con políticas de Storage que
 comprueban la primera carpeta de la ruta.
 
-El catálogo de los 328 temas está en el **código**
-([`src/data/programa.ts`](src/data/programa.ts)), no en la base de datos: es el mismo
-para todos, cambia con los despliegues y así el primer arranque no necesita ninguna
-consulta.
+No hay catálogo global: **todo el contenido pertenece al usuario y vive en su
+cuenta**. El programa oficial de Notarías existe solo como plantilla opcional en
+[`src/data/plantillas.ts`](src/data/plantillas.ts), que no se aplica sola: se importa
+desde Ajustes y a partir de ese momento los temas son suyos y editables.
 
 ---
 
@@ -259,9 +285,10 @@ en 3 minutos cuando el objetivo son 12 no está en tiempo, está incompleto.
 ```
 opos-notaria/
 ├── src/
-│   ├── data/programa.ts        # los 328 temas por bloque
+│   ├── data/plantillas.ts      # programa oficial como plantilla OPCIONAL
 │   ├── lib/
 │   │   ├── types.ts            # modelo de dominio
+│   │   ├── bloques.ts          # materias del usuario, paleta y parser de listas
 │   │   ├── srs.ts              # sistema de vueltas, riesgo, nota, oxidación
 │   │   ├── recurrence.ts       # motor de recurrencia y botón de pánico
 │   │   ├── audio.ts            # grabación, Storage/IndexedDB, enlace al preparador
@@ -274,7 +301,7 @@ opos-notaria/
 │   │   ├── ui.tsx              # Card, Modal, Tabs, Toggle, Slider, Chip…
 │   │   ├── charts.tsx          # Ring, Barras, Línea, Heatmap, Sparkline
 │   │   └── Layout.tsx
-│   └── pages/                  # Login, Dashboard, Cante, Temario,
+│   └── pages/                  # Login, Bienvenida, Dashboard, Cante, Temario,
 │                               # Calendario, Metricas, Bombo, Ajustes
 ├── supabase/migrations/        # esquema + RLS + bucket
 ├── scripts/seed-demo.mjs       # usuario de prueba con datos realistas
@@ -297,8 +324,8 @@ opos-notaria/
 - **Nada de gamificación infantil**: los hitos van en números romanos y miden
   trabajo real. Un jurista que estudia 10 horas al día no quiere confeti.
 - **Commits**: [Conventional Commits](https://www.conventionalcommits.org/).
-- El programa precargado procede de fuentes públicas (BOE) y es editable por el
-  usuario.
+- **Nada precargado**: la app no impone temario. La plantilla opcional del programa
+  oficial procede de fuentes públicas (BOE) y, una vez cargada, es del usuario.
 
 ---
 

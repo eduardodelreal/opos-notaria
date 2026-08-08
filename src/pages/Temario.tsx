@@ -1,59 +1,86 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '@/store/AppStore'
-import { BLOQUE_MAP, BLOQUES } from '@/data/programa'
 import { ESTADOS, progresoVacio, riesgo } from '@/lib/srs'
 import { fmtDuracion, fmtHoras, fmtRelativo, hoy } from '@/lib/dates'
 import { cn, colorNota, copiar, pct, uid } from '@/lib/utils'
-import { Campo, Card, Chip, Modal, Select, Tabs, useConfirmar, Vacio } from '@/components/ui'
+import {
+  Campo,
+  Card,
+  Chip,
+  Modal,
+  Select,
+  Tabs,
+  useConfirmar,
+  Vacio,
+} from '@/components/ui'
 import { Progreso } from '@/components/charts'
 import { enlaceParaPreparador, urlAudio } from '@/lib/audio'
-import type { BlockId, EstadoTema, Tema } from '@/lib/types'
+import {
+  PALETA,
+  bloqueDe,
+  crearBloque,
+  mapaBloques,
+  ordenarBloques,
+  parsearTemas,
+  siguienteNumero,
+} from '@/lib/bloques'
+import type { Block, BlockId, EstadoTema, Tema } from '@/lib/types'
 
-type Orden = 'programa' | 'riesgo' | 'nota' | 'reciente'
+type Orden = 'programa' | 'riesgo' | 'nota' | 'reciente' | 'nuevos'
 
 export function Temario() {
-  const { data, guardarTema, borrarTema, guardarProgreso } = useApp()
+  const { data, guardarTema, guardarTemas, borrarTema, guardarProgreso } = useApp()
   const nav = useNavigate()
-  const { temas, progreso } = data
+  const { temas, progreso, bloques } = data
   const h = hoy()
 
-  const [bloque, setBloque] = useState<'todos' | BlockId>('todos')
+  const [bloqueSel, setBloqueSel] = useState<'todos' | BlockId>('todos')
   const [estado, setEstado] = useState<'todos' | EstadoTema>('todos')
   const [busca, setBusca] = useState('')
   const [orden, setOrden] = useState<Orden>('programa')
   const [abierto, setAbierto] = useState<string | null>(null)
   const [editando, setEditando] = useState<Tema | null>(null)
   const [creando, setCreando] = useState(false)
+  const [pegando, setPegando] = useState(false)
+  const [gestionandoMaterias, setGestionandoMaterias] = useState(false)
   const confirmar = useConfirmar()
+
+  const mapaB = useMemo(() => mapaBloques(bloques), [bloques])
+  const bloquesOrd = useMemo(() => ordenarBloques(bloques), [bloques])
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase()
+    const orderBloque = new Map(bloquesOrd.map((b, i) => [b.id, i]))
     let out = temas.filter((t) => {
-      if (bloque !== 'todos' && t.bloque !== bloque) return false
+      if (bloqueSel !== 'todos' && t.bloque !== bloqueSel) return false
       const e = progreso[t.id]?.estado ?? 'no_tocado'
       if (estado !== 'todos' && e !== estado) return false
       if (!q) return true
-      return (
-        t.titulo.toLowerCase().includes(q) ||
-        `${t.numero}` === q ||
-        t.id.toLowerCase().includes(q)
-      )
+      return t.titulo.toLowerCase().includes(q) || `${t.numero}` === q
     })
-    const clave = (t: Tema) => {
-      const p = progreso[t.id] ?? progresoVacio(t.id)
-      if (orden === 'riesgo') return -(p.estado === 'no_tocado' ? 100 : riesgo(p, h))
-      if (orden === 'nota') return p.notaMedia ?? 99
-      if (orden === 'reciente') return p.ultimoCante ? -Number(p.ultimoCante.replace(/-/g, '')) : 1
-      return 0
-    }
-    if (orden !== 'programa') out = [...out].sort((a, b) => clave(a) - clave(b))
+    out = [...out].sort((a, b) => {
+      if (orden === 'programa') {
+        const d = (orderBloque.get(a.bloque) ?? 99) - (orderBloque.get(b.bloque) ?? 99)
+        return d !== 0 ? d : a.numero - b.numero
+      }
+      const pa = progreso[a.id] ?? progresoVacio(a.id)
+      const pb = progreso[b.id] ?? progresoVacio(b.id)
+      if (orden === 'riesgo') {
+        const ra = pa.estado === 'no_tocado' ? 100 : riesgo(pa, h)
+        const rb = pb.estado === 'no_tocado' ? 100 : riesgo(pb, h)
+        return rb - ra
+      }
+      if (orden === 'nota') return (pa.notaMedia ?? 99) - (pb.notaMedia ?? 99)
+      if (orden === 'nuevos') return (b.creadoEn ?? '').localeCompare(a.creadoEn ?? '')
+      return (pa.ultimoCante ?? '9999').localeCompare(pb.ultimoCante ?? '9999')
+    })
     return out
-  }, [temas, progreso, bloque, estado, busca, orden, h])
+  }, [temas, progreso, bloqueSel, estado, busca, orden, h, bloquesOrd])
 
   const resumenBloques = useMemo(
     () =>
-      BLOQUES.map((b) => {
+      bloquesOrd.map((b) => {
         const ts = temas.filter((t) => t.bloque === b.id && !t.excluido)
         const dominados = ts.filter((t) => progreso[t.id]?.estado === 'dominado').length
         const tocados = ts.filter(
@@ -61,7 +88,7 @@ export function Temario() {
         ).length
         return { bloque: b, total: ts.length, dominados, tocados }
       }),
-    [temas, progreso],
+    [bloquesOrd, temas, progreso],
   )
 
   const conteoEstados = useMemo(() => {
@@ -74,32 +101,74 @@ export function Temario() {
     return c
   }, [temas, progreso])
 
+  const activos = temas.filter((t) => !t.excluido).length
+
+  /* ------------------------------------------------------ estado vacío -- */
+
+  if (temas.length === 0) {
+    return (
+      <>
+        <TemarioVacio
+          hayMaterias={bloques.length > 0}
+          onPegar={() => setPegando(true)}
+          onCrearMateria={() => setGestionandoMaterias(true)}
+          onCrearTema={() => setCreando(true)}
+        />
+        <PegarTemas abierto={pegando} cerrar={() => setPegando(false)} />
+        <GestorMaterias
+          abierto={gestionandoMaterias}
+          cerrar={() => setGestionandoMaterias(false)}
+        />
+        <EditorTema
+          abierto={creando}
+          tema={null}
+          cerrar={() => setCreando(false)}
+          onGuardar={(t) => {
+            void guardarTema(t)
+            setCreando(false)
+          }}
+          onBorrar={() => {}}
+          onExcluir={() => {}}
+        />
+      </>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-serif text-[30px] leading-tight">Temario</h1>
+          <h1 className="font-serif text-[30px] leading-tight">Tu temario</h1>
           <p className="mt-1 text-[13.5px] text-ink-500">
-            {temas.filter((t) => !t.excluido).length} temas en programa. Puedes editar títulos,
-            excluir temas o añadir los tuyos.
+            {activos} {activos === 1 ? 'tema' : 'temas'} en {bloques.length}{' '}
+            {bloques.length === 1 ? 'materia' : 'materias'}. Ve añadiendo los que te den en la
+            academia.
           </p>
         </div>
-        <button onClick={() => setCreando(true)} className="btn-secondary">
-          + Añadir tema
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => setGestionandoMaterias(true)} className="btn-ghost">
+            Materias
+          </button>
+          <button onClick={() => setPegando(true)} className="btn-secondary">
+            Pegar lista
+          </button>
+          <button onClick={() => setCreando(true)} className="btn-primary">
+            + Añadir temas
+          </button>
+        </div>
       </header>
 
-      {/* Resumen por bloque */}
+      {/* Resumen por materia */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {resumenBloques.map(({ bloque: b, total, dominados, tocados }) => (
           <button
             key={b.id}
-            onClick={() => setBloque(bloque === b.id ? 'todos' : b.id)}
+            onClick={() => setBloqueSel(bloqueSel === b.id ? 'todos' : b.id)}
             className={cn(
               'card card-hover p-4 text-left',
-              bloque === b.id && 'ring-4 ring-sage-100',
+              bloqueSel === b.id && 'ring-4 ring-sage-100',
             )}
-            style={bloque === b.id ? { borderColor: b.color } : undefined}
+            style={bloqueSel === b.id ? { borderColor: b.color } : undefined}
           >
             <div className="flex items-baseline justify-between">
               <span className="text-[14px] font-semibold" style={{ color: b.colorText }}>
@@ -111,10 +180,16 @@ export function Temario() {
             </div>
             <Progreso valor={tocados} max={total} alto={5} color={b.color} className="mt-2.5" />
             <p className="mt-2 text-[11.5px] text-ink-400">
-              <span className="num font-semibold" style={{ color: b.color }}>
-                {dominados}
-              </span>{' '}
-              dominados · {pct(dominados, total)}% del bloque · {b.ejercicio}º ejercicio
+              {total === 0 ? (
+                'sin temas todavía'
+              ) : (
+                <>
+                  <span className="num font-semibold" style={{ color: b.color }}>
+                    {dominados}
+                  </span>{' '}
+                  dominados · {pct(dominados, total)}% · {b.ejercicio}º ejercicio
+                </>
+              )}
             </p>
           </button>
         ))}
@@ -151,15 +226,15 @@ export function Temario() {
           />
           <Select
             className="w-full sm:w-48"
-            value={bloque}
-            onChange={(v) => setBloque(v as 'todos' | BlockId)}
+            value={bloqueSel}
+            onChange={(v) => setBloqueSel(v)}
             opciones={[
-              { valor: 'todos', etiqueta: 'Todos los bloques' },
-              ...BLOQUES.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
+              { valor: 'todos', etiqueta: 'Todas las materias' },
+              ...bloquesOrd.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
             ]}
           />
           <Select
-            className="w-full sm:w-44"
+            className="w-full sm:w-48"
             value={orden}
             onChange={(v) => setOrden(v as Orden)}
             opciones={[
@@ -167,6 +242,7 @@ export function Temario() {
               { valor: 'riesgo', etiqueta: 'Más riesgo primero' },
               { valor: 'nota', etiqueta: 'Peor nota primero' },
               { valor: 'reciente', etiqueta: 'Cantado hace más' },
+              { valor: 'nuevos', etiqueta: 'Añadidos hace poco' },
             ]}
           />
         </div>
@@ -180,7 +256,7 @@ export function Temario() {
           <ul className="divide-y divide-ink-100">
             {filtrados.map((t) => {
               const p = progreso[t.id] ?? progresoVacio(t.id)
-              const b = BLOQUE_MAP[t.bloque]
+              const b = bloqueDe(mapaB, t.bloque)
               const est = ESTADOS[p.estado]
               return (
                 <li key={t.id}>
@@ -213,11 +289,6 @@ export function Temario() {
                             prioritario
                           </Chip>
                         )}
-                        {t.custom && (
-                          <Chip color="#544766" bg="#E9E3F0">
-                            propio
-                          </Chip>
-                        )}
                         {t.excluido && <Chip>excluido</Chip>}
                       </div>
                       <p className="mt-0.5 truncate text-[13.5px] font-medium text-ink-900">
@@ -247,7 +318,6 @@ export function Temario() {
         )}
       </Card>
 
-      {/* Ficha de tema */}
       {abierto && (
         <FichaTema
           temaId={abierto}
@@ -260,7 +330,6 @@ export function Temario() {
         />
       )}
 
-      {/* Editor / creador */}
       <EditorTema
         abierto={creando || !!editando}
         tema={editando}
@@ -272,6 +341,10 @@ export function Temario() {
           void guardarTema(t)
           setCreando(false)
           setEditando(null)
+        }}
+        onGuardarVarios={(ts) => {
+          void guardarTemas(ts)
+          setCreando(false)
         }}
         onBorrar={(id) => {
           confirmar.pedir(
@@ -294,11 +367,462 @@ export function Temario() {
         prioritario={editando ? (progreso[editando.id]?.prioritario ?? false) : false}
       />
 
+      <PegarTemas abierto={pegando} cerrar={() => setPegando(false)} />
+      <GestorMaterias abierto={gestionandoMaterias} cerrar={() => setGestionandoMaterias(false)} />
+
       {confirmar.nodo}
     </div>
   )
 }
 
+/* ==================================================================== */
+/*  Estado vacío                                                        */
+/* ==================================================================== */
+
+function TemarioVacio({
+  hayMaterias,
+  onPegar,
+  onCrearMateria,
+  onCrearTema,
+}: {
+  hayMaterias: boolean
+  onPegar(): void
+  onCrearMateria(): void
+  onCrearTema(): void
+}) {
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 py-6">
+      <header className="text-center">
+        <h1 className="font-serif text-[32px] leading-tight">Tu temario está vacío</h1>
+        <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-ink-500">
+          Y así debe empezar. Ve metiendo los temas según te los vayan dando en la academia: la
+          app se construye contigo, no al revés.
+        </p>
+      </header>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <OpcionVacio
+          icono="⌸"
+          titulo="Pegar una lista"
+          desc="Copia el temario del PDF o del WhatsApp de la academia y pégalo. Se numera solo."
+          cta="Pegar lista"
+          onClick={onPegar}
+          destacado
+        />
+        <OpcionVacio
+          icono="+"
+          titulo="Uno a uno"
+          desc="Escribe los temas a mano, seguidos, sin salir del cuadro."
+          cta="Añadir temas"
+          onClick={onCrearTema}
+          deshabilitado={!hayMaterias}
+          motivo="Crea antes una materia"
+        />
+        <OpcionVacio
+          icono="◫"
+          titulo="Crear materias"
+          desc="Civil, Mercantil, Hipotecario… o las que use tu preparador."
+          cta="Gestionar materias"
+          onClick={onCrearMateria}
+        />
+      </div>
+
+      <Card className="bg-canvas/60">
+        <p className="label mb-2">Por si te sirve</p>
+        <ul className="space-y-1.5 text-[12.5px] leading-snug text-ink-500">
+          <li className="flex gap-2">
+            <span className="text-sage-500">·</span>
+            No hace falta que metas los 328 de golpe. Con los de esta semana ya puedes cantar y
+            empezar a acumular datos.
+          </li>
+          <li className="flex gap-2">
+            <span className="text-sage-500">·</span>
+            El número y el título los pones tú: si tu preparador numera distinto, manda él.
+          </li>
+          <li className="flex gap-2">
+            <span className="text-sage-500">·</span>
+            Si algún día quieres el programa oficial completo como punto de partida, está en
+            Ajustes → Cargar plantilla. Después es tuyo y lo editas.
+          </li>
+        </ul>
+      </Card>
+    </div>
+  )
+}
+
+function OpcionVacio({
+  icono,
+  titulo,
+  desc,
+  cta,
+  onClick,
+  destacado,
+  deshabilitado,
+  motivo,
+}: {
+  icono: string
+  titulo: string
+  desc: string
+  cta: string
+  onClick(): void
+  destacado?: boolean
+  deshabilitado?: boolean
+  motivo?: string
+}) {
+  return (
+    <div
+      className={cn(
+        'card flex flex-col p-5',
+        destacado && 'border-sage-200 bg-sage-50/40',
+        deshabilitado && 'opacity-60',
+      )}
+    >
+      <span
+        className={cn(
+          'mb-3 flex h-9 w-9 items-center justify-center rounded-xl text-[15px]',
+          destacado ? 'bg-sage-600 text-white' : 'bg-ink-100 text-ink-400',
+        )}
+      >
+        {icono}
+      </span>
+      <p className="text-[14px] font-semibold text-ink-900">{titulo}</p>
+      <p className="mt-1 flex-1 text-[12px] leading-snug text-ink-500">{desc}</p>
+      <button
+        onClick={onClick}
+        disabled={deshabilitado}
+        className={cn('mt-4 w-full', destacado ? 'btn-primary btn-sm' : 'btn-secondary btn-sm')}
+      >
+        {deshabilitado ? motivo : cta}
+      </button>
+    </div>
+  )
+}
+
+/* ==================================================================== */
+/*  Pegar lista de temas                                                */
+/* ==================================================================== */
+
+function PegarTemas({ abierto, cerrar }: { abierto: boolean; cerrar(): void }) {
+  const { data, guardarTemas, guardarBloque, mostrarAviso } = useApp()
+  const [texto, setTexto] = useState('')
+  const [destino, setDestino] = useState<string>('')
+  const [materiaNueva, setMateriaNueva] = useState('')
+  const [renumerar, setRenumerar] = useState(true)
+  const [guardando, setGuardando] = useState(false)
+  const bloquesOrd = useMemo(() => ordenarBloques(data.bloques), [data.bloques])
+
+  useEffect(() => {
+    if (abierto) {
+      setTexto('')
+      setMateriaNueva('')
+      setDestino(bloquesOrd[0]?.id ?? '__nueva__')
+    }
+  }, [abierto, bloquesOrd])
+
+  const parseadas = useMemo(() => parsearTemas(texto), [texto])
+  const creaMateria = destino === '__nueva__'
+  const puede = parseadas.length > 0 && (!creaMateria || materiaNueva.trim().length > 0)
+
+  const importar = async () => {
+    setGuardando(true)
+    try {
+      let bloqueId = destino
+      if (creaMateria) {
+        const b = crearBloque(materiaNueva, data.bloques)
+        await guardarBloque(b)
+        bloqueId = b.id
+      }
+      const base = renumerar ? 0 : siguienteNumero(data.temas, bloqueId) - 1
+      const existentes = new Set(data.temas.map((t) => t.id))
+      const nuevos: Tema[] = parseadas.map((l, i) => {
+        const numero = l.numero ?? base + i + 1
+        let id = `${bloqueId}_${String(numero).padStart(3, '0')}`
+        // Si ya existe ese número, no pisamos el tema anterior.
+        if (existentes.has(id)) id = `${bloqueId}_${String(numero).padStart(3, '0')}_${uid()}`
+        existentes.add(id)
+        return { id, bloque: bloqueId, numero, titulo: l.titulo, creadoEn: hoy() }
+      })
+      await guardarTemas(nuevos)
+      mostrarAviso(
+        `${nuevos.length} ${nuevos.length === 1 ? 'tema añadido' : 'temas añadidos'}.`,
+        'ok',
+      )
+      cerrar()
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <Modal
+      abierto={abierto}
+      cerrar={cerrar}
+      titulo="Pegar una lista de temas"
+      ancho="max-w-2xl"
+      pie={
+        <>
+          <span className="mr-auto text-[12.5px] text-ink-500">
+            {parseadas.length > 0 && (
+              <>
+                <span className="num font-bold text-sage-700">{parseadas.length}</span>{' '}
+                {parseadas.length === 1 ? 'tema detectado' : 'temas detectados'}
+              </>
+            )}
+          </span>
+          <button className="btn-secondary btn-sm" onClick={cerrar}>
+            Cancelar
+          </button>
+          <button
+            className="btn-primary btn-sm"
+            disabled={!puede || guardando}
+            onClick={() => void importar()}
+          >
+            {guardando ? 'Añadiendo…' : `Añadir ${parseadas.length || ''}`.trim()}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Campo label="Materia de destino">
+            <Select
+              value={destino}
+              onChange={setDestino}
+              opciones={[
+                ...bloquesOrd.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
+                { valor: '__nueva__', etiqueta: '+ Crear una materia nueva' },
+              ]}
+            />
+          </Campo>
+          {creaMateria && (
+            <Campo label="Nombre de la materia">
+              <input
+                className="input"
+                value={materiaNueva}
+                onChange={(e) => setMateriaNueva(e.target.value)}
+                placeholder="p. ej. Civil"
+                autoFocus
+              />
+            </Campo>
+          )}
+        </div>
+
+        <Campo
+          label="Pega aquí el temario"
+          hint="Un tema por línea. Detecta «1.», «Tema 2 -», «3)» y viñetas; si no hay número, los numera seguidos."
+        >
+          <textarea
+            className="input min-h-[200px] resize-y font-mono text-[12.5px] leading-relaxed"
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            placeholder={
+              '1. El Derecho civil español. La codificación.\nTema 2 - Las fuentes del Derecho\n3) La costumbre y los usos jurídicos\n• La jurisprudencia'
+            }
+          />
+        </Campo>
+
+        <label className="flex items-center gap-2.5">
+          <input
+            type="checkbox"
+            checked={renumerar}
+            onChange={(e) => setRenumerar(e.target.checked)}
+            className="h-4 w-4 rounded border-ink-300 accent-sage-600"
+          />
+          <span className="text-[13px] text-ink-700">
+            Respetar los números de la lista{' '}
+            <span className="text-ink-400">
+              (si no, continúan a partir del último tema de la materia)
+            </span>
+          </span>
+        </label>
+
+        {parseadas.length > 0 && (
+          <div>
+            <p className="label mb-2">Vista previa</p>
+            <ul className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-ink-100 bg-canvas/60 p-2.5">
+              {parseadas.slice(0, 40).map((l, i) => (
+                <li key={i} className="flex gap-2.5 text-[12.5px]">
+                  <span className="num w-7 shrink-0 text-right font-bold text-sage-600">
+                    {l.numero ?? i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-ink-700">{l.titulo}</span>
+                </li>
+              ))}
+              {parseadas.length > 40 && (
+                <li className="pt-1 text-center text-[11.5px] text-ink-400">
+                  …y {parseadas.length - 40} más
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+/* ==================================================================== */
+/*  Gestor de materias                                                  */
+/* ==================================================================== */
+
+function GestorMaterias({ abierto, cerrar }: { abierto: boolean; cerrar(): void }) {
+  const { data, guardarBloque, borrarBloque } = useApp()
+  const [nombre, setNombre] = useState('')
+  const [ejercicio, setEjercicio] = useState<Block['ejercicio']>(1)
+  const [editando, setEditando] = useState<Block | null>(null)
+  const confirmar = useConfirmar()
+  const bloquesOrd = useMemo(() => ordenarBloques(data.bloques), [data.bloques])
+  const refNombre = useRef<HTMLInputElement>(null)
+
+  const añadir = () => {
+    const n = nombre.trim()
+    if (!n) return
+    void guardarBloque(crearBloque(n, data.bloques, { ejercicio }))
+    setNombre('')
+    refNombre.current?.focus()
+  }
+
+  const contarTemas = (id: BlockId) => data.temas.filter((t) => t.bloque === id).length
+
+  return (
+    <Modal abierto={abierto} cerrar={cerrar} titulo="Materias del programa" ancho="max-w-xl">
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-ink-100 bg-canvas/60 p-4">
+          <p className="label mb-2.5">Nueva materia</p>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={refNombre}
+              className="input min-w-[160px] flex-1"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && añadir()}
+              placeholder="Civil, Mercantil, Hipotecario…"
+              autoFocus
+            />
+            <Select
+              className="w-32"
+              value={String(ejercicio)}
+              onChange={(v) => setEjercicio(Number(v) as Block['ejercicio'])}
+              opciones={[1, 2, 3, 4].map((n) => ({ valor: String(n), etiqueta: `${n}º ejerc.` }))}
+            />
+            <button onClick={añadir} disabled={!nombre.trim()} className="btn-primary btn-sm">
+              Añadir
+            </button>
+          </div>
+        </div>
+
+        {bloquesOrd.length === 0 ? (
+          <p className="py-4 text-center text-[13px] text-ink-400">
+            Todavía no has creado ninguna materia.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {bloquesOrd.map((b) => {
+              const n = contarTemas(b.id)
+              const enEdicion = editando?.id === b.id
+              return (
+                <li key={b.id} className="rounded-xl border border-ink-100 p-3">
+                  {enEdicion ? (
+                    <div className="space-y-3">
+                      <input
+                        className="input"
+                        value={editando.nombre}
+                        onChange={(e) => setEditando({ ...editando, nombre: e.target.value })}
+                        autoFocus
+                      />
+                      <div className="flex flex-wrap gap-1.5">
+                        {PALETA.map((c) => (
+                          <button
+                            key={c.color}
+                            onClick={() =>
+                              setEditando({
+                                ...editando,
+                                color: c.color,
+                                colorSoft: c.colorSoft,
+                                colorText: c.colorText,
+                              })
+                            }
+                            title={c.nombre}
+                            className={cn(
+                              'h-7 w-7 rounded-lg transition-transform',
+                              editando.color === c.color
+                                ? 'scale-110 ring-2 ring-offset-2 ring-ink-300'
+                                : 'hover:scale-105',
+                            )}
+                            style={{ background: c.color }}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Select
+                          className="w-32"
+                          value={String(editando.ejercicio)}
+                          onChange={(v) =>
+                            setEditando({ ...editando, ejercicio: Number(v) as Block['ejercicio'] })
+                          }
+                          opciones={[1, 2, 3, 4].map((x) => ({
+                            valor: String(x),
+                            etiqueta: `${x}º ejerc.`,
+                          }))}
+                        />
+                        <button
+                          className="btn-primary btn-sm ml-auto"
+                          onClick={() => {
+                            if (editando.nombre.trim()) void guardarBloque(editando)
+                            setEditando(null)
+                          }}
+                        >
+                          Guardar
+                        </button>
+                        <button className="btn-ghost btn-sm" onClick={() => setEditando(null)}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <span
+                        className="h-8 w-2 shrink-0 rounded-full"
+                        style={{ background: b.color }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13.5px] font-semibold text-ink-900">{b.nombre}</p>
+                        <p className="text-[11.5px] text-ink-400">
+                          {n} {n === 1 ? 'tema' : 'temas'} · {b.ejercicio}º ejercicio
+                        </p>
+                      </div>
+                      <button onClick={() => setEditando(b)} className="btn-ghost btn-sm px-2">
+                        ✎
+                      </button>
+                      <button
+                        onClick={() =>
+                          confirmar.pedir(
+                            n > 0
+                              ? `Se borrará la materia «${b.nombre}» y sus ${n} temas, con su progreso. Los cantes se conservan en el historial.`
+                              : `Se borrará la materia «${b.nombre}».`,
+                            () => void borrarBloque(b.id),
+                            true,
+                          )
+                        }
+                        className="btn-ghost btn-sm px-2 text-clay-500"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+      {confirmar.nodo}
+    </Modal>
+  )
+}
+
+/* ==================================================================== */
+/*  Ficha de tema                                                       */
 /* ==================================================================== */
 
 function FichaTema({
@@ -321,13 +845,14 @@ function FichaTema({
   )
   const [notas, setNotas] = useState(p.notas ?? '')
   const [minutos, setMinutos] = useState(30)
+  const mapaB = useMemo(() => mapaBloques(data.bloques), [data.bloques])
   const h = hoy()
   const confirmar = useConfirmar()
 
   useEffect(() => setNotas(p.notas ?? ''), [p.notas])
 
   if (!tema) return null
-  const b = BLOQUE_MAP[tema.bloque]
+  const b = bloqueDe(mapaB, tema.bloque)
   const est = ESTADOS[p.estado]
 
   return (
@@ -364,21 +889,13 @@ function FichaTema({
           </div>
         </div>
 
-        {/* Métricas del tema */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <MiniDato label="Cantes" valor={`${cantes.length}`} />
           <MiniDato label="Horas" valor={fmtHoras(p.minutosEstudio)} />
-          <MiniDato
-            label="Intervalo"
-            valor={p.intervalo > 0 ? `${p.intervalo} d` : '—'}
-          />
-          <MiniDato
-            label="Riesgo"
-            valor={`${p.estado === 'no_tocado' ? 100 : riesgo(p, h)}`}
-          />
+          <MiniDato label="Intervalo" valor={p.intervalo > 0 ? `${p.intervalo} d` : '—'} />
+          <MiniDato label="Riesgo" valor={`${p.estado === 'no_tocado' ? 100 : riesgo(p, h)}`} />
         </div>
 
-        {/* Acciones rápidas de estado */}
         <div>
           <p className="label mb-2">Forzar estado</p>
           <div className="flex flex-wrap gap-1.5">
@@ -386,10 +903,7 @@ function FichaTema({
               <button
                 key={e}
                 onClick={() => void guardarProgreso(temaId, { estado: e })}
-                className={cn(
-                  'chip transition-all',
-                  p.estado === e ? 'ring-2 ring-offset-1' : 'opacity-60 hover:opacity-100',
-                )}
+                className={cn('chip transition-all', p.estado !== e && 'opacity-60 hover:opacity-100')}
                 style={{
                   color: ESTADOS[e].color,
                   background: ESTADOS[e].bg,
@@ -401,14 +915,16 @@ function FichaTema({
             ))}
             <button
               onClick={() => void guardarProgreso(temaId, { prioritario: !p.prioritario })}
-              className={cn('chip', p.prioritario ? 'bg-gold-100 text-gold-500' : 'bg-ink-100 text-ink-400')}
+              className={cn(
+                'chip',
+                p.prioritario ? 'bg-gold-100 text-gold-500' : 'bg-ink-100 text-ink-400',
+              )}
             >
               {p.prioritario ? '★ prioritario' : '☆ marcar prioritario'}
             </button>
           </div>
         </div>
 
-        {/* Registrar tiempo de estudio */}
         <div className="rounded-2xl border border-ink-100 bg-canvas/60 p-4">
           <p className="label mb-2">Registrar estudio (sin cantar)</p>
           <div className="flex flex-wrap items-center gap-2">
@@ -440,7 +956,20 @@ function FichaTema({
           </div>
         </div>
 
-        {/* Notas */}
+        {tema.epigrafes && tema.epigrafes.length > 0 && (
+          <div>
+            <p className="label mb-2">Epígrafes</p>
+            <ol className="space-y-1 rounded-xl bg-canvas/60 p-3">
+              {tema.epigrafes.map((e, i) => (
+                <li key={i} className="flex gap-2 text-[12.5px] text-ink-600">
+                  <span className="num text-ink-300">{i + 1}.</span>
+                  {e}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
         <Campo label="Mis notas de este tema" hint="Se guardan al salir del campo.">
           <textarea
             className="input min-h-[90px] resize-y"
@@ -451,7 +980,6 @@ function FichaTema({
           />
         </Campo>
 
-        {/* Historial */}
         <div>
           <p className="label mb-2">Historial de cantes</p>
           {cantes.length === 0 ? (
@@ -465,8 +993,13 @@ function FichaTema({
                   key={c.id}
                   cante={c}
                   tema={tema}
+                  bloqueNombre={b.nombre}
                   onBorrar={() =>
-                    confirmar.pedir('Se borrará este cante y su audio.', () => void borrarCante(c.id), true)
+                    confirmar.pedir(
+                      'Se borrará este cante y su audio.',
+                      () => void borrarCante(c.id),
+                      true,
+                    )
                   }
                 />
               ))}
@@ -491,10 +1024,12 @@ function MiniDato({ label, valor }: { label: string; valor: string }) {
 function FilaCante({
   cante,
   tema,
+  bloqueNombre,
   onBorrar,
 }: {
   cante: import('@/lib/types').Cante
   tema: Tema
+  bloqueNombre: string
   onBorrar(): void
 }) {
   const { mostrarAviso, data } = useApp()
@@ -507,10 +1042,9 @@ function FilaCante({
     setCompartiendo(true)
     try {
       const enlace = cante.audioPath ? await enlaceParaPreparador(cante.audioPath) : null
-      const b = BLOQUE_MAP[tema.bloque]
       const lineas = [
         `${data.ajustes.nombre || 'Opositor'} · cante grabado`,
-        `${b.nombre} · Tema ${tema.numero}: ${tema.titulo}`,
+        `${bloqueNombre} · Tema ${tema.numero}: ${tema.titulo}`,
         `Fecha: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long', timeStyle: 'short' }).format(new Date(cante.fecha))}`,
         `Tiempo: ${fmtDuracion(cante.duracionSegundos)} (límite ${fmtDuracion(cante.objetivoSegundos)})`,
         `Autovaloración: ${cante.nota.toFixed(1)}/10${cante.lagunas ? ` · ${cante.lagunas} lagunas` : ''}`,
@@ -602,12 +1136,15 @@ function FilaCante({
 }
 
 /* ==================================================================== */
+/*  Editor / alta rápida de temas                                       */
+/* ==================================================================== */
 
 function EditorTema({
   abierto,
   tema,
   cerrar,
   onGuardar,
+  onGuardarVarios,
   onBorrar,
   onExcluir,
   onPrioritario,
@@ -617,89 +1154,165 @@ function EditorTema({
   tema: Tema | null
   cerrar(): void
   onGuardar(t: Tema): void
+  onGuardarVarios?(ts: Tema[]): void
   onBorrar(id: string): void
   onExcluir(t: Tema): void
-  onPrioritario(t: Tema): void
-  prioritario: boolean
+  onPrioritario?(t: Tema): void
+  prioritario?: boolean
 }) {
+  const { data, guardarTema, mostrarAviso } = useApp()
   const [titulo, setTitulo] = useState('')
-  const [bloque, setBloque] = useState<BlockId>('civil')
+  const [bloque, setBloque] = useState<BlockId>('')
   const [numero, setNumero] = useState(1)
   const [epigrafes, setEpigrafes] = useState('')
+  /** En alta rápida se van acumulando aquí antes de guardar de golpe. */
+  const [cola, setCola] = useState<Tema[]>([])
+  const refTitulo = useRef<HTMLTextAreaElement>(null)
+  const bloquesOrd = useMemo(() => ordenarBloques(data.bloques), [data.bloques])
+  const esAlta = !tema
 
   useEffect(() => {
     if (!abierto) return
+    setCola([])
     setTitulo(tema?.titulo ?? '')
-    setBloque(tema?.bloque ?? 'civil')
-    setNumero(tema?.numero ?? 1)
     setEpigrafes((tema?.epigrafes ?? []).join('\n'))
+    const b = tema?.bloque ?? bloquesOrd[0]?.id ?? ''
+    setBloque(b)
+    setNumero(tema?.numero ?? (b ? siguienteNumero(data.temas, b) : 1))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abierto, tema])
 
-  const guardar = () => {
-    if (!titulo.trim()) return
+  /** Al cambiar de materia en alta, propone el siguiente número libre. */
+  const cambiarBloque = (b: BlockId) => {
+    setBloque(b)
+    if (esAlta) {
+      const yaEnCola = cola.filter((t) => t.bloque === b).length
+      setNumero(siguienteNumero(data.temas, b) + yaEnCola)
+    }
+  }
+
+  const construir = (): Tema | null => {
+    const tit = titulo.trim()
+    if (!tit || !bloque) return null
     const eps = epigrafes
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean)
-    onGuardar({
-      id: tema?.id ?? `PROP_${uid()}`,
+    const id = tema?.id ?? `${bloque}_${String(numero).padStart(3, '0')}_${uid()}`
+    return {
+      id,
       bloque,
       numero,
-      titulo: titulo.trim(),
-      custom: tema?.custom ?? !tema,
+      titulo: tit,
       excluido: tema?.excluido,
       epigrafes: eps.length ? eps : undefined,
-    })
+      creadoEn: tema?.creadoEn ?? hoy(),
+    }
+  }
+
+  /** Guarda el actual y deja el cuadro listo para el siguiente. */
+  const siguiente = () => {
+    const t = construir()
+    if (!t) return
+    setCola((c) => [...c, t])
+    void guardarTema(t)
+    setTitulo('')
+    setEpigrafes('')
+    setNumero((n) => n + 1)
+    refTitulo.current?.focus()
+  }
+
+  const terminar = () => {
+    const t = construir()
+    if (t) {
+      if (esAlta && onGuardarVarios) onGuardarVarios([t])
+      else onGuardar(t)
+    } else if (cola.length) {
+      mostrarAviso(
+        `${cola.length} ${cola.length === 1 ? 'tema añadido' : 'temas añadidos'}.`,
+        'ok',
+      )
+      cerrar()
+    } else {
+      cerrar()
+    }
+  }
+
+  if (bloquesOrd.length === 0 && abierto) {
+    return (
+      <Modal abierto cerrar={cerrar} titulo="Antes, una materia" ancho="max-w-md">
+        <p className="text-[13.5px] leading-relaxed text-ink-600">
+          Los temas van dentro de una materia (Civil, Mercantil, la que uses). Crea al menos una
+          desde el botón <strong>Materias</strong> y vuelve aquí.
+        </p>
+      </Modal>
+    )
   }
 
   return (
     <Modal
       abierto={abierto}
       cerrar={cerrar}
-      titulo={tema ? 'Editar tema' : 'Añadir tema propio'}
+      titulo={tema ? 'Editar tema' : 'Añadir temas'}
+      ancho="max-w-xl"
       pie={
         <>
-          {tema && (
+          {tema ? (
             <>
               <button className="btn-ghost btn-sm mr-auto" onClick={() => onExcluir(tema)}>
                 {tema.excluido ? 'Volver a incluir' : 'Excluir del programa'}
               </button>
-              {tema.custom && (
-                <button className="btn-ghost btn-sm text-clay-500" onClick={() => onBorrar(tema.id)}>
-                  Borrar
-                </button>
-              )}
+              <button
+                className="btn-ghost btn-sm text-clay-500"
+                onClick={() => onBorrar(tema.id)}
+              >
+                Borrar
+              </button>
+              <button className="btn-secondary btn-sm" onClick={cerrar}>
+                Cancelar
+              </button>
+              <button className="btn-primary btn-sm" onClick={terminar}>
+                Guardar
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="mr-auto text-[12.5px] text-ink-500">
+                {cola.length > 0 && (
+                  <>
+                    <span className="num font-bold text-sage-700">{cola.length}</span> añadidos en
+                    esta tanda
+                  </>
+                )}
+              </span>
+              <button
+                className="btn-secondary btn-sm"
+                disabled={!titulo.trim()}
+                onClick={siguiente}
+                title="Ctrl + Enter"
+              >
+                Guardar y seguir
+              </button>
+              <button className="btn-primary btn-sm" onClick={terminar}>
+                {titulo.trim() ? 'Guardar y cerrar' : 'Cerrar'}
+              </button>
             </>
           )}
-          <button className="btn-secondary btn-sm" onClick={cerrar}>
-            Cancelar
-          </button>
-          <button className="btn-primary btn-sm" onClick={guardar}>
-            Guardar
-          </button>
         </>
       }
     >
       <div className="space-y-4">
-        <Campo label="Título del tema">
-          <textarea
-            className="input min-h-[70px] resize-y"
-            value={titulo}
-            onChange={(e) => setTitulo(e.target.value)}
-            placeholder="El negocio jurídico: concepto, elementos y clases."
-          />
-        </Campo>
-        <div className="grid grid-cols-2 gap-3">
-          <Campo label="Bloque">
+        <div className="grid grid-cols-[1fr_auto] gap-3">
+          <Campo label="Materia">
             <Select
               value={bloque}
-              onChange={(v) => setBloque(v as BlockId)}
-              opciones={BLOQUES.map((b) => ({ valor: b.id, etiqueta: b.nombre }))}
+              onChange={cambiarBloque}
+              opciones={bloquesOrd.map((b) => ({ valor: b.id, etiqueta: b.nombre }))}
             />
           </Campo>
-          <Campo label="Número">
+          <Campo label="Nº">
             <input
-              className="input num"
+              className="input num w-20 text-center"
               type="number"
               min={1}
               value={numero}
@@ -707,18 +1320,57 @@ function EditorTema({
             />
           </Campo>
         </div>
+
         <Campo
-          label="Epígrafes (uno por línea)"
-          hint="Opcional. Sirve para marcar en qué epígrafe te quedas en blanco."
+          label="Título del tema"
+          hint={esAlta ? 'Ctrl + Enter guarda y deja el cuadro listo para el siguiente.' : undefined}
         >
           <textarea
-            className="input min-h-[100px] resize-y font-mono text-[12.5px]"
+            ref={refTitulo}
+            className="input min-h-[72px] resize-y"
+            value={titulo}
+            onChange={(e) => setTitulo(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault()
+                if (esAlta) siguiente()
+                else terminar()
+              }
+            }}
+            placeholder="El negocio jurídico: concepto, elementos y clases."
+            autoFocus
+          />
+        </Campo>
+
+        <Campo
+          label="Epígrafes (opcional, uno por línea)"
+          hint="Útil para saber en qué punto te quedas en blanco."
+        >
+          <textarea
+            className="input min-h-[80px] resize-y font-mono text-[12.5px]"
             value={epigrafes}
             onChange={(e) => setEpigrafes(e.target.value)}
             placeholder={'Concepto\nElementos esenciales\nClases\nEficacia'}
           />
         </Campo>
-        {tema && (
+
+        {cola.length > 0 && (
+          <div>
+            <p className="label mb-1.5">Añadidos ahora</p>
+            <ul className="max-h-32 space-y-1 overflow-y-auto rounded-xl bg-canvas/60 p-2.5">
+              {[...cola].reverse().map((t) => (
+                <li key={t.id} className="flex gap-2 text-[12px]">
+                  <span className="num w-6 shrink-0 text-right font-bold text-sage-600">
+                    {t.numero}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-ink-600">{t.titulo}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {tema && onPrioritario && (
           <button onClick={() => onPrioritario(tema)} className="btn-secondary btn-sm w-full">
             {prioritario ? '★ Quitar de prioritarios' : '☆ Marcar como prioritario'}
           </button>

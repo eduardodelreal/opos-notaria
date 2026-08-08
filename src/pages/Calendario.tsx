@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '@/store/AppStore'
-import { BLOQUES, BLOQUE_MAP } from '@/data/programa'
+import { bloqueDe, mapaBloques, ordenarBloques } from '@/lib/bloques'
 import {
   cargaPlanificada,
   describirRecurrencia,
@@ -79,6 +79,7 @@ export function Calendario() {
     [seleccion, h, data.temas, data.progreso, data.ajustes],
   )
   const mapaTemas = useMemo(() => new Map(data.temas.map((t) => [t.id, t])), [data.temas])
+  const mapaB = useMemo(() => mapaBloques(data.bloques), [data.bloques])
 
   const cargaDia = cargaPlanificada(data.tareas, seleccion)
   const topeDia = data.ajustes.metaHorasDia * 60
@@ -324,7 +325,7 @@ export function Calendario() {
                   {colaSeleccion.slice(0, 5).map((c) => {
                     const t = mapaTemas.get(c.temaId)
                     if (!t) return null
-                    const b = BLOQUE_MAP[t.bloque]
+                    const b = bloqueDe(mapaB, t.bloque)
                     return (
                       <li key={c.temaId} className="flex items-center gap-2.5 px-4 py-2.5">
                         <span
@@ -443,6 +444,7 @@ export function Calendario() {
           tarea={editor.tarea}
           fechaDefecto={editor.fecha}
           temas={data.temas}
+          bloques={ordenarBloques(data.bloques)}
           cerrar={() => setEditor(null)}
           onGuardar={(t) => {
             void guardarTarea(t)
@@ -575,6 +577,7 @@ function EditorTarea({
   tarea,
   fechaDefecto,
   temas,
+  bloques,
   cerrar,
   onGuardar,
   onBorrar,
@@ -582,6 +585,7 @@ function EditorTarea({
   tarea: Tarea | null
   fechaDefecto: string
   temas: import('@/lib/types').Tema[]
+  bloques: import('@/lib/types').Block[]
   cerrar(): void
   onGuardar(t: Tarea): void
   onBorrar(id: string): void
@@ -883,8 +887,8 @@ function EditorTarea({
                 setTemaId('')
               }}
               opciones={[
-                { valor: '', etiqueta: 'Sin bloque' },
-                ...BLOQUES.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
+                { valor: '', etiqueta: 'Sin materia' },
+                ...bloques.map((b) => ({ valor: b.id, etiqueta: b.nombre })),
               ]}
             />
           </Campo>
@@ -896,7 +900,7 @@ function EditorTarea({
                 { valor: '', etiqueta: 'Sin tema' },
                 ...temasFiltrados.map((t) => ({
                   valor: t.id,
-                  etiqueta: `${BLOQUE_MAP[t.bloque].nombre} ${t.numero} · ${t.titulo.slice(0, 40)}`,
+                  etiqueta: `${t.numero} · ${t.titulo.slice(0, 46)}`,
                 })),
               ]}
             />

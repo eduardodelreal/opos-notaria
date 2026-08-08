@@ -5,11 +5,20 @@ import { ESCALONES } from '@/lib/srs'
 import { DIAS_CORTOS, fmtDuracion, hoy } from '@/lib/dates'
 import { cn, copiar } from '@/lib/utils'
 import { Campo, Card, Chip, Select, SectionTitle, Slider, Toggle, useConfirmar } from '@/components/ui'
-import { TOTAL_TEMAS } from '@/data/programa'
+import { PLANTILLAS, contarTemas, materializar } from '@/data/plantillas'
 
 export function Ajustes() {
-  const { data, guardarAjustes, exportar, importar, resetear, mostrarAviso, session, modoLocal } =
-    useApp()
+  const {
+    data,
+    guardarAjustes,
+    exportar,
+    importar,
+    resetear,
+    importarPlantilla,
+    mostrarAviso,
+    session,
+    modoLocal,
+  } = useApp()
   const a = data.ajustes
   const confirmar = useConfirmar()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -292,14 +301,65 @@ export function Ajustes() {
         </div>
       </Card>
 
+      {/* ----------------------------------------------------- plantillas */}
+      <Card>
+        <SectionTitle sub="Solo si quieres. Todo lo que cargues pasa a ser tuyo y editable.">
+          Cargar un programa de plantilla
+        </SectionTitle>
+        <p className="mb-4 text-[12.5px] leading-relaxed text-ink-500">
+          Tu temario lo construyes tú, tema a tema, según te lo van dando. Pero si prefieres partir
+          del programa oficial completo y luego borrar, renumerar o reescribir lo que no encaje,
+          aquí lo tienes. No sustituye nada de lo que ya tengas: solo añade lo que falte.
+        </p>
+        <div className="space-y-2">
+          {PLANTILLAS.map((pl) => (
+            <div
+              key={pl.id}
+              className="flex flex-wrap items-center gap-3 rounded-xl border border-ink-100 p-3.5"
+            >
+              <div className="min-w-[200px] flex-1">
+                <p className="text-[13.5px] font-semibold text-ink-900">{pl.nombre}</p>
+                <p className="mt-0.5 text-[12px] leading-snug text-ink-500">{pl.desc}</p>
+              </div>
+              <button
+                onClick={() =>
+                  confirmar.pedir(
+                    contarTemas(pl) > 0
+                      ? `Se añadirán ${contarTemas(pl)} temas en ${pl.materias.length} materias. No se toca nada de lo que ya tengas.`
+                      : `Se crearán ${pl.materias.length} materias vacías.`,
+                    async () => {
+                      const { bloques, temas } = materializar(pl, data.bloques)
+                      await importarPlantilla(bloques, temas)
+                      mostrarAviso(
+                        temas.length
+                          ? `${temas.length} temas añadidos. Ya son tuyos: edítalos a tu gusto.`
+                          : `${bloques.length} materias creadas.`,
+                        'ok',
+                      )
+                    },
+                  )
+                }
+                className="btn-secondary btn-sm shrink-0"
+              >
+                Cargar
+                {contarTemas(pl) > 0 && (
+                  <span className="num ml-1 text-ink-400">{contarTemas(pl)}</span>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* ------------------------------------------------------- datos --- */}
       <Card>
-        <SectionTitle sub={`${TOTAL_TEMAS} temas de catálogo + tus temas propios`}>
-          Tus datos
-        </SectionTitle>
+        <SectionTitle sub="Todo lo has creado tú">Tus datos</SectionTitle>
         <div className="grid gap-3 sm:grid-cols-3">
+          <Resumen
+            label="Materias y temas"
+            valor={`${data.bloques.length} · ${data.temas.length}`}
+          />
           <Resumen label="Cantes registrados" valor={`${data.cantes.length}`} />
-          <Resumen label="Sesiones de estudio" valor={`${data.sesiones.length}`} />
           <Resumen label="Tareas y series" valor={`${data.tareas.length}`} />
         </div>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -332,7 +392,7 @@ export function Ajustes() {
           <button
             onClick={() =>
               confirmar.pedir(
-                'Se borrarán TODOS tus cantes, sesiones, tareas y progreso. El temario volverá a su estado inicial. Esta acción no se puede deshacer.',
+                'Se borrará TODO: materias, temas, cantes, sesiones, tareas y progreso. La app volverá a estar vacía. Esta acción no se puede deshacer.',
                 () => {
                   void resetear()
                   mostrarAviso('Datos reiniciados.', 'ok')

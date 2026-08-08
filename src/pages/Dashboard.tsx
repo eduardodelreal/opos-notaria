@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useApp } from '@/store/AppStore'
-import { BLOQUE_MAP, BLOQUES } from '@/data/programa'
+import { bloqueDe, mapaBloques, ordenarBloques } from '@/lib/bloques'
 import {
   colaDelDia,
   dentroDeTiempo,
@@ -24,6 +24,7 @@ export function Dashboard() {
   const { ajustes, temas, progreso, cantes, sesiones, tareas, diasCumplidos } = data
 
   const activos = useMemo(() => temas.filter((t) => !t.excluido), [temas])
+  const mapaB = useMemo(() => mapaBloques(data.bloques), [data.bloques])
   const mapaTemas = useMemo(() => new Map(temas.map((t) => [t.id, t])), [temas])
 
   /* -------------------------------------------------------------- KPIs -- */
@@ -109,12 +110,14 @@ export function Dashboard() {
       const b = mapaTemas.get(c.temaId)?.bloque
       if (b) conteo.set(b, (conteo.get(b) ?? 0) + c.duracionSegundos / 60)
     }
-    return BLOQUES.filter((b) => Math.round(conteo.get(b.id) ?? 0) >= 1).map((b) => ({
-      etiqueta: b.nombre,
-      valor: Math.round(conteo.get(b.id) ?? 0),
-      color: b.color,
-    }))
-  }, [sesiones, cantes, mapaTemas, h])
+    return ordenarBloques(data.bloques)
+      .filter((b) => Math.round(conteo.get(b.id) ?? 0) >= 1)
+      .map((b) => ({
+        etiqueta: b.nombre,
+        valor: Math.round(conteo.get(b.id) ?? 0),
+        color: b.color,
+      }))
+  }, [sesiones, cantes, mapaTemas, data.bloques, h])
 
   /* ---------------------------------------------------------- previsión - */
 
@@ -156,6 +159,9 @@ export function Dashboard() {
 
   const diasExamen = ajustes.fechaExamen ? diffDays(h, ajustes.fechaExamen) : null
   const esDiaPreparador = ajustes.diaPreparador === parseIso(h).getDay()
+
+  /* Programa vacío: primeros pasos en vez de un panel lleno de ceros. */
+  if (activos.length === 0) return <PrimerosPasos nombre={ajustes.nombre} />
 
   return (
     <div className="space-y-6">
@@ -286,7 +292,7 @@ export function Dashboard() {
                   const tema = mapaTemas.get(item.temaId)
                   if (!tema) return null
                   const p = progreso[item.temaId] ?? progresoVacio(item.temaId)
-                  const bloque = BLOQUE_MAP[tema.bloque]
+                  const bloque = bloqueDe(mapaB, tema.bloque)
                   const r = item.motivo === 'nuevo' ? 100 : riesgo(p, h)
                   return (
                     <li key={item.temaId} className="group flex items-center gap-3.5 px-5 py-3.5">
@@ -462,7 +468,7 @@ export function Dashboard() {
               to="/temario"
               className="mt-4 block text-center text-[12.5px] font-semibold text-sage-700 hover:underline"
             >
-              Ver los 328 temas →
+              Ver los {activos.length} temas →
             </Link>
           </Card>
 
@@ -620,5 +626,106 @@ function KpiCante({
         ))}
       </div>
     </Card>
+  )
+}
+
+/* ==================================================================== */
+
+function PrimerosPasos({ nombre }: { nombre: string }) {
+  const pasos = [
+    {
+      n: 1,
+      titulo: 'Añade tus primeros temas',
+      texto:
+        'Los que te hayan dado esta semana en la academia. No hacen falta los 328: con tres ya puedes empezar a medir.',
+      cta: 'Ir al temario',
+      to: '/temario',
+      principal: true,
+    },
+    {
+      n: 2,
+      titulo: 'Canta uno con el cronómetro',
+      texto:
+        'Se graba solo. Al terminar te pones nota de contenido y la app calcula la nota final con el tiempo.',
+      cta: 'Cantar',
+      to: '/cante',
+    },
+    {
+      n: 3,
+      titulo: 'Monta tu semana',
+      texto:
+        'Cante diario, día de preparador, dictamen del sábado. Tareas que se repiten sin que las vuelvas a escribir.',
+      cta: 'Abrir calendario',
+      to: '/calendario',
+    },
+  ]
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 py-4">
+      <header>
+        <p className="label">
+          {new Intl.DateTimeFormat('es-ES', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+          }).format(new Date())}
+        </p>
+        <h1 className="mt-1 font-serif text-[30px] leading-tight text-ink-900">
+          {saludo()}
+          {nombre ? `, ${nombre.split(' ')[0]}` : ''}.
+        </h1>
+        <p className="mt-1.5 text-[14px] leading-relaxed text-ink-500">
+          Aquí no hay nada todavía, y es lo normal: este panel se llena con lo que tú vayas
+          metiendo. Tres pasos y empieza a tener sentido.
+        </p>
+      </header>
+
+      <div className="space-y-3">
+        {pasos.map((p) => (
+          <Card key={p.n} className={cn('flex items-start gap-4', p.principal && 'border-sage-200')}>
+            <span
+              className={cn(
+                'num flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[13px] font-bold',
+                p.principal ? 'bg-sage-600 text-white' : 'bg-ink-100 text-ink-400',
+              )}
+            >
+              {p.n}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[14.5px] font-semibold text-ink-900">{p.titulo}</p>
+              <p className="mt-1 text-[12.5px] leading-snug text-ink-500">{p.texto}</p>
+            </div>
+            <Link
+              to={p.to}
+              className={cn('shrink-0', p.principal ? 'btn-primary btn-sm' : 'btn-secondary btn-sm')}
+            >
+              {p.cta}
+            </Link>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="bg-canvas/60">
+        <p className="label mb-2">Qué verás aquí en cuanto haya datos</p>
+        <ul className="grid gap-2 text-[12.5px] leading-snug text-ink-500 sm:grid-cols-2">
+          <li className="flex gap-2">
+            <span className="text-sage-500">·</span>
+            Los temas que toca cantar hoy, ordenados por riesgo de examen
+          </li>
+          <li className="flex gap-2">
+            <span className="text-sage-500">·</span>
+            Minutos reales de cante frente a tu objetivo diario
+          </li>
+          <li className="flex gap-2">
+            <span className="text-sage-500">·</span>
+            Cuántos cantes entran en el tiempo tasado
+          </li>
+          <li className="flex gap-2">
+            <span className="text-sage-500">·</span>
+            La previsión de repasos de las próximas seis semanas
+          </li>
+        </ul>
+      </Card>
+    </div>
   )
 }

@@ -1,6 +1,7 @@
 import type {
   AppData,
   Ajustes,
+  Block,
   Cante,
   ProgresoTema,
   SesionEstudio,
@@ -10,7 +11,6 @@ import type {
 } from './types'
 import { supabase } from './supabase'
 import { datosVacios, DATA_VERSION } from './defaults'
-import { PROGRAMA } from '@/data/programa'
 
 /**
  * Dos drivers con la misma interfaz:
@@ -33,7 +33,11 @@ export interface Repo {
   upsertTarea(t: Tarea): Promise<void>
   deleteTarea(id: string): Promise<void>
   upsertTema(t: Tema): Promise<void>
+  upsertTemas(ts: Tema[]): Promise<void>
   deleteTema(id: string): Promise<void>
+  upsertBloque(b: Block): Promise<void>
+  upsertBloques(bs: Block[]): Promise<void>
+  deleteBloque(id: string): Promise<void>
   insertSimulacro(s: Simulacro): Promise<void>
   saveMeta(meta: { diasCumplidos: string[]; logros: string[] }): Promise<void>
   /** Sustituye todo el estado (importar copia de seguridad / reset). */
@@ -54,16 +58,8 @@ export class LocalRepo implements Repo {
       const raw = localStorage.getItem(LS_KEY)
       if (raw) {
         const parsed = JSON.parse(raw) as AppData
-        // Reconciliar el catálogo: los temas base vienen del código, los custom del store.
-        const custom = (parsed.temas ?? []).filter((t) => t.custom)
-        const editados = new Map((parsed.temas ?? []).map((t) => [t.id, t]))
-        const base = PROGRAMA.map((t) => ({ ...t, ...(editados.get(t.id) ?? {}) }))
-        this.cache = {
-          ...datosVacios(),
-          ...parsed,
-          version: DATA_VERSION,
-          temas: [...base, ...custom],
-        }
+        // Todo el catálogo es del usuario: se guarda y se lee tal cual.
+        this.cache = { ...datosVacios(), ...parsed, version: DATA_VERSION }
         return this.cache
       }
     } catch (e) {
@@ -140,10 +136,44 @@ export class LocalRepo implements Repo {
       else d.temas.push(t)
     })
   }
+  async upsertTemas(ts: Tema[]) {
+    this.write((d) => {
+      const idx = new Map(d.temas.map((t, i) => [t.id, i]))
+      for (const t of ts) {
+        const i = idx.get(t.id)
+        if (i != null) d.temas[i] = t
+        else d.temas.push(t)
+      }
+    })
+  }
   async deleteTema(id: string) {
     this.write((d) => {
       d.temas = d.temas.filter((x) => x.id !== id)
       delete d.progreso[id]
+    })
+  }
+  async upsertBloque(b: Block) {
+    this.write((d) => {
+      const i = d.bloques.findIndex((x) => x.id === b.id)
+      if (i >= 0) d.bloques[i] = b
+      else d.bloques.push(b)
+    })
+  }
+  async upsertBloques(bs: Block[]) {
+    this.write((d) => {
+      for (const b of bs) {
+        const i = d.bloques.findIndex((x) => x.id === b.id)
+        if (i >= 0) d.bloques[i] = b
+        else d.bloques.push(b)
+      }
+    })
+  }
+  async deleteBloque(id: string) {
+    this.write((d) => {
+      d.bloques = d.bloques.filter((x) => x.id !== id)
+      const huerfanos = d.temas.filter((t) => t.bloque === id).map((t) => t.id)
+      d.temas = d.temas.filter((t) => t.bloque !== id)
+      for (const t of huerfanos) delete d.progreso[t]
     })
   }
   async insertSimulacro(s: Simulacro) {
@@ -180,15 +210,21 @@ export class SupabaseRepo implements Repo {
 
   async load(): Promise<AppData> {
     const sb = must()
-    const [perfil, temas, progreso, cantes, sesiones, tareas, simulacros] = await Promise.all([
-      sb.from('perfiles').select('*').eq('id', this.uid).maybeSingle(),
-      sb.from('temas_usuario').select('*').eq('user_id', this.uid),
-      sb.from('progreso').select('*').eq('user_id', this.uid),
-      sb.from('cantes').select('*').eq('user_id', this.uid).order('fecha', { ascending: false }),
-      sb.from('sesiones').select('*').eq('user_id', this.uid).order('fecha', { ascending: false }),
-      sb.from('tareas').select('*').eq('user_id', this.uid),
-      sb.from('simulacros').select('*').eq('user_id', this.uid).order('fecha', { ascending: false }),
-    ])
+    const [perfil, bloques, temas, progreso, cantes, sesiones, tareas, simulacros] =
+      await Promise.all([
+        sb.from('perfiles').select('*').eq('id', this.uid).maybeSingle(),
+        sb.from('bloques').select('*').eq('user_id', this.uid).order('orden'),
+        sb.from('temas').select('*').eq('user_id', this.uid).order('numero'),
+        sb.from('progreso').select('*').eq('user_id', this.uid),
+        sb.from('cantes').select('*').eq('user_id', this.uid).order('fecha', { ascending: false }),
+        sb.from('sesiones').select('*').eq('user_id', this.uid).order('fecha', { ascending: false }),
+        sb.from('tareas').select('*').eq('user_id', this.uid),
+        sb
+          .from('simulacros')
+          .select('*')
+          .eq('user_id', this.uid)
+          .order('fecha', { ascending: false }),
+      ])
 
     const base = datosVacios()
 
@@ -206,42 +242,26 @@ export class SupabaseRepo implements Repo {
       })
     }
 
-    // Catálogo: base del código + overrides y temas propios de la tabla.
-    const filas = (temas.data ?? []) as {
-      tema_id: string
-      bloque: string
-      numero: number
-      titulo: string
-      custom: boolean
-      excluido: boolean
-      epigrafes: string[] | null
-    }[]
-    const overrides = new Map(filas.map((f) => [f.tema_id, f]))
-    const catalogo: Tema[] = PROGRAMA.map((t) => {
-      const o = overrides.get(t.id)
-      return o
-        ? {
-            ...t,
-            titulo: o.titulo || t.titulo,
-            excluido: o.excluido,
-            epigrafes: o.epigrafes ?? undefined,
-          }
-        : t
-    })
-    for (const f of filas) {
-      if (!f.custom) continue
-      if (catalogo.some((t) => t.id === f.tema_id)) continue
-      catalogo.push({
-        id: f.tema_id,
-        bloque: f.bloque as Tema['bloque'],
-        numero: f.numero,
-        titulo: f.titulo,
-        custom: true,
-        excluido: f.excluido,
-        epigrafes: f.epigrafes ?? undefined,
-      })
-    }
-    base.temas = catalogo
+    // Materias y temas: todo es del usuario, no hay catálogo base que reconciliar.
+    base.bloques = (bloques.data ?? []).map((r) => ({
+      id: r.bloque_id,
+      nombre: r.nombre,
+      ejercicio: r.ejercicio,
+      color: r.color,
+      colorSoft: r.color_soft,
+      colorText: r.color_text,
+      orden: r.orden,
+    }))
+
+    base.temas = (temas.data ?? []).map((r) => ({
+      id: r.tema_id,
+      bloque: r.bloque_id,
+      numero: r.numero,
+      titulo: r.titulo,
+      excluido: r.excluido ?? false,
+      epigrafes: r.epigrafes ?? undefined,
+      creadoEn: r.creado_en?.slice(0, 10),
+    }))
 
     for (const r of progreso.data ?? []) {
       base.progreso[r.tema_id] = {
@@ -416,27 +436,81 @@ export class SupabaseRepo implements Repo {
     await must().from('tareas').delete().eq('id', id).eq('user_id', this.uid)
   }
 
-  async upsertTema(t: Tema) {
-    await must()
-      .from('temas_usuario')
-      .upsert(
-        {
-          user_id: this.uid,
-          tema_id: t.id,
-          bloque: t.bloque,
-          numero: t.numero,
-          titulo: t.titulo,
-          custom: t.custom ?? false,
-          excluido: t.excluido ?? false,
-          epigrafes: t.epigrafes ?? null,
-        },
-        { onConflict: 'user_id,tema_id' },
-      )
+  private temaRow(t: Tema) {
+    return {
+      user_id: this.uid,
+      tema_id: t.id,
+      bloque_id: t.bloque,
+      numero: t.numero,
+      titulo: t.titulo,
+      excluido: t.excluido ?? false,
+      epigrafes: t.epigrafes ?? null,
+    }
   }
+
+  async upsertTema(t: Tema) {
+    const { error } = await must()
+      .from('temas')
+      .upsert(this.temaRow(t), { onConflict: 'user_id,tema_id' })
+    if (error) throw error
+  }
+
+  async upsertTemas(ts: Tema[]) {
+    if (!ts.length) return
+    const sb = must()
+    // Por lotes: pegar un temario entero son cientos de filas de golpe.
+    for (let i = 0; i < ts.length; i += 300) {
+      const { error } = await sb
+        .from('temas')
+        .upsert(ts.slice(i, i + 300).map((t) => this.temaRow(t)), {
+          onConflict: 'user_id,tema_id',
+        })
+      if (error) throw error
+    }
+  }
+
   async deleteTema(id: string) {
     const sb = must()
-    await sb.from('temas_usuario').delete().eq('tema_id', id).eq('user_id', this.uid)
+    await sb.from('temas').delete().eq('tema_id', id).eq('user_id', this.uid)
     await sb.from('progreso').delete().eq('tema_id', id).eq('user_id', this.uid)
+  }
+
+  private bloqueRow(b: Block) {
+    return {
+      user_id: this.uid,
+      bloque_id: b.id,
+      nombre: b.nombre,
+      ejercicio: b.ejercicio,
+      color: b.color,
+      color_soft: b.colorSoft,
+      color_text: b.colorText,
+      orden: b.orden,
+    }
+  }
+
+  async upsertBloque(b: Block) {
+    const { error } = await must()
+      .from('bloques')
+      .upsert(this.bloqueRow(b), { onConflict: 'user_id,bloque_id' })
+    if (error) throw error
+  }
+
+  async upsertBloques(bs: Block[]) {
+    if (!bs.length) return
+    const { error } = await must()
+      .from('bloques')
+      .upsert(bs.map((b) => this.bloqueRow(b)), { onConflict: 'user_id,bloque_id' })
+    if (error) throw error
+  }
+
+  async deleteBloque(id: string) {
+    const sb = must()
+    // Los temas de la materia caen con ella (y su progreso, por la FK).
+    const { data } = await sb.from('temas').select('tema_id').eq('user_id', this.uid).eq('bloque_id', id)
+    const ids = (data ?? []).map((r) => r.tema_id)
+    if (ids.length) await sb.from('progreso').delete().eq('user_id', this.uid).in('tema_id', ids)
+    await sb.from('temas').delete().eq('user_id', this.uid).eq('bloque_id', id)
+    await sb.from('bloques').delete().eq('user_id', this.uid).eq('bloque_id', id)
   }
 
   async insertSimulacro(s: Simulacro) {
@@ -460,15 +534,17 @@ export class SupabaseRepo implements Repo {
       sb.from('tareas').delete().eq('user_id', this.uid),
       sb.from('simulacros').delete().eq('user_id', this.uid),
       sb.from('progreso').delete().eq('user_id', this.uid),
-      sb.from('temas_usuario').delete().eq('user_id', this.uid),
+      sb.from('temas').delete().eq('user_id', this.uid),
     ])
+    await sb.from('bloques').delete().eq('user_id', this.uid)
     await this.saveAjustes(data.ajustes)
     await this.saveMeta({ diasCumplidos: data.diasCumplidos, logros: data.logros })
+    await this.upsertBloques(data.bloques)
+    await this.upsertTemas(data.temas)
     for (const p of Object.values(data.progreso)) await this.upsertProgreso(p)
     for (const c of data.cantes) await this.insertCante(c)
     for (const s of data.sesiones) await this.insertSesion(s)
     for (const t of data.tareas) await this.upsertTarea(t)
     for (const s of data.simulacros) await this.insertSimulacro(s)
-    for (const t of data.temas.filter((x) => x.custom || x.excluido)) await this.upsertTema(t)
   }
 }

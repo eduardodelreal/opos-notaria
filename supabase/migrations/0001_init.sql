@@ -18,22 +18,52 @@ create table if not exists public.perfiles (
   actualizado_en timestamptz not null default now()
 );
 
--- --------------------------------------------------------- temas_usuario ---
--- Solo guarda DIFERENCIAS respecto al catálogo que viene en el código:
--- títulos editados, temas excluidos y temas propios del opositor.
-create table if not exists public.temas_usuario (
+-- ---------------------------------------------------------------- bloques --
+-- Las materias las crea el opositor: la app no impone ningún programa.
+create table if not exists public.bloques (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  bloque_id  text not null,
+  nombre     text not null,
+  ejercicio  smallint not null default 1 check (ejercicio between 1 and 4),
+  color      text not null default '#517C5E',
+  color_soft text not null default '#DFE8E1',
+  color_text text not null default '#293F30',
+  orden      integer not null default 0,
+  creado_en  timestamptz not null default now(),
+  unique (user_id, bloque_id)
+);
+
+create index if not exists bloques_user_orden_idx on public.bloques (user_id, orden);
+
+-- ------------------------------------------------------------------ temas --
+-- Todos los temas son del usuario. Los va añadiendo según se los dan en la
+-- academia: uno a uno, pegando una lista o cargando una plantilla opcional.
+-- Migración desde el esquema anterior, por si la v1 ya se ejecutó.
+do $$
+begin
+  if to_regclass('public.temas_usuario') is not null
+     and to_regclass('public.temas') is null then
+    alter table public.temas_usuario rename to temas;
+    alter table public.temas rename column bloque to bloque_id;
+    alter table public.temas drop column if exists custom;
+  end if;
+end $$;
+
+create table if not exists public.temas (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references auth.users (id) on delete cascade,
   tema_id    text not null,
-  bloque     text not null,
+  bloque_id  text not null,
   numero     integer not null default 1,
   titulo     text not null,
-  custom     boolean not null default false,
   excluido   boolean not null default false,
   epigrafes  text[],
   creado_en  timestamptz not null default now(),
   unique (user_id, tema_id)
 );
+
+create index if not exists temas_user_bloque_idx on public.temas (user_id, bloque_id, numero);
 
 -- ---------------------------------------------------------------- progreso --
 create table if not exists public.progreso (
@@ -142,7 +172,8 @@ create index if not exists simulacros_user_fecha_idx on public.simulacros (user_
 -- ============================================================================
 
 alter table public.perfiles      enable row level security;
-alter table public.temas_usuario enable row level security;
+alter table public.bloques      enable row level security;
+alter table public.temas        enable row level security;
 alter table public.progreso      enable row level security;
 alter table public.cantes        enable row level security;
 alter table public.sesiones      enable row level security;
@@ -158,7 +189,7 @@ create policy "perfiles propios" on public.perfiles
 do $$
 declare t text;
 begin
-  foreach t in array array['temas_usuario','progreso','cantes','sesiones','tareas','simulacros']
+  foreach t in array array['bloques','temas','progreso','cantes','sesiones','tareas','simulacros']
   loop
     execute format('drop policy if exists "datos propios" on public.%I', t);
     execute format(

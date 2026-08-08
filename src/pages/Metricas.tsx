@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '@/store/AppStore'
-import { BLOQUES, BLOQUE_MAP } from '@/data/programa'
+import { bloqueDe, mapaBloques, ordenarBloques } from '@/lib/bloques'
 import { CALIFICACIONES, dentroDeTiempo, ESTADOS, progresoVacio } from '@/lib/srs'
 import { addDays, diffDays, fmtDuracion, fmtFecha, fmtHoras, hoy, startOfWeek } from '@/lib/dates'
 import { cn, colorNota, media, pct, suma } from '@/lib/utils'
@@ -19,6 +19,7 @@ export function Metricas() {
   const desde = rango === 'todo' ? '0000-01-01' : addDays(h, -Number(rango) + 1)
   const mapaTemas = useMemo(() => new Map(temas.map((t) => [t.id, t])), [temas])
   const activos = useMemo(() => temas.filter((t) => !t.excluido), [temas])
+  const mapaB = useMemo(() => mapaBloques(data.bloques), [data.bloques])
 
   const cantesR = useMemo(
     () => cantes.filter((c) => c.fecha.slice(0, 10) >= desde),
@@ -101,7 +102,7 @@ export function Metricas() {
 
   const porBloque = useMemo(
     () =>
-      BLOQUES.map((b) => {
+      ordenarBloques(data.bloques).map((b) => {
         const ts = activos.filter((t) => t.bloque === b.id)
         const cs = cantesR.filter((c) => mapaTemas.get(c.temaId)?.bloque === b.id)
         const ps = ts.map((t) => progreso[t.id] ?? progresoVacio(t.id))
@@ -124,7 +125,7 @@ export function Metricas() {
           duracionMedia: cs.length ? media(cs.map((c) => c.duracionSegundos)) : null,
         }
       }),
-    [activos, cantesR, sesionesR, mapaTemas, progreso],
+    [activos, cantesR, sesionesR, mapaTemas, progreso, data.bloques],
   )
 
   const distribCalif = useMemo(
@@ -571,7 +572,7 @@ export function Metricas() {
                   {s.temaIds.map((id) => {
                     const t = mapaTemas.get(id)
                     if (!t) return null
-                    const b = BLOQUE_MAP[t.bloque]
+                    const b = bloqueDe(mapaB, t.bloque)
                     return (
                       <span
                         key={id}
