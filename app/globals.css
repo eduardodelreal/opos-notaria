@@ -1,0 +1,288 @@
+@import "tailwindcss";
+
+/* ============================================================
+   opos-notaria — sistema de diseño "juzgado moderno"
+   Tinta profunda + lacre notarial + latón. Serif para el texto
+   jurídico, sans geométrica para la interfaz.
+   Los tokens viven como variables CSS y Tailwind los consume
+   con `@theme inline`, así el cambio de tema es instantáneo.
+   ============================================================ */
+
+:root {
+  /* --- superficies --- */
+  --bg: #08090c;
+  --bg-elevated: #0e1116;
+  --surface: #12151b;
+  --surface-2: #191d25;
+  --surface-3: #212632;
+  --border: #262c37;
+  --border-strong: #384252;
+
+  /* --- texto --- */
+  --fg: #e9ecf1;
+  --fg-muted: #98a1b0;
+  --fg-subtle: #626c7d;
+
+  /* --- marca --- */
+  --lacre: #a82f3c;
+  --lacre-bright: #c94152;
+  --lacre-soft: rgba(168, 47, 60, 0.14);
+  --laton: #c9a227;
+  --laton-soft: rgba(201, 162, 39, 0.13);
+
+  /* --- estados del programa --- */
+  --st-nuevo: #3d4653;
+  --st-estudiando: #d99a2b;
+  --st-cantable: #3f93c4;
+  --st-dominado: #46a35c;
+  --st-oxidado: #c9583f;
+
+  /* --- feedback --- */
+  --ok: #46a35c;
+  --warn: #d99a2b;
+  --danger: #c9503f;
+  --info: #3f93c4;
+
+  --ring: rgba(201, 162, 39, 0.55);
+  --shadow-lg: 0 24px 60px -20px rgba(0, 0, 0, 0.75);
+  --shadow-md: 0 10px 30px -14px rgba(0, 0, 0, 0.7);
+
+  --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+
+  color-scheme: dark;
+}
+
+:root.light {
+  --bg: #f6f4ef;
+  --bg-elevated: #fffdf9;
+  --surface: #ffffff;
+  --surface-2: #f2efe8;
+  --surface-3: #e8e3d9;
+  --border: #ddd7cb;
+  --border-strong: #c4bcab;
+
+  --fg: #1b1a17;
+  --fg-muted: #5f5b52;
+  --fg-subtle: #8a8477;
+
+  --lacre: #9c2733;
+  --lacre-bright: #b8323f;
+  --lacre-soft: rgba(156, 39, 51, 0.1);
+  --laton: #9a7b12;
+  --laton-soft: rgba(154, 123, 18, 0.12);
+
+  --st-nuevo: #c4bcab;
+  --st-estudiando: #b8801c;
+  --st-cantable: #2f7ba8;
+  --st-dominado: #35844a;
+  --st-oxidado: #b04630;
+
+  --ring: rgba(154, 123, 18, 0.5);
+  --shadow-lg: 0 24px 50px -24px rgba(60, 50, 30, 0.32);
+  --shadow-md: 0 10px 26px -16px rgba(60, 50, 30, 0.3);
+
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-subtle: var(--fg-subtle);
+
+  --color-lacre: var(--lacre);
+  --color-lacre-bright: var(--lacre-bright);
+  --color-laton: var(--laton);
+
+  --color-nuevo: var(--st-nuevo);
+  --color-estudiando: var(--st-estudiando);
+  --color-cantable: var(--st-cantable);
+  --color-dominado: var(--st-dominado);
+  --color-oxidado: var(--st-oxidado);
+
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+
+  --font-sans: var(--font-ui);
+  --font-serif: var(--font-serif);
+
+  --radius-card: 14px;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Fondo con textura sutil: viñeta + grano de papel */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      1100px 600px at 12% -10%,
+      var(--laton-soft),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 520px at 105% 8%,
+      var(--lacre-soft),
+      transparent 62%
+    );
+}
+
+::selection {
+  background: var(--laton);
+  color: #10120f;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* --- scrollbar --- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ============================================================
+   Utilidades de componente
+   ============================================================ */
+
+@utility card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-md);
+}
+
+@utility panel {
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  backdrop-filter: blur(12px);
+}
+
+@utility numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+@utility prose-tema {
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: var(--fg);
+}
+
+@utility hairline {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    var(--border-strong),
+    transparent
+  );
+  height: 1px;
+}
+
+/* ============================================================
+   Animaciones
+   ============================================================ */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--lacre-soft);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(0, 0, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-rise {
+  animation: rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-pulse-ring {
+  animation: pulse-ring 2s infinite;
+}
+.animate-spin-slow {
+  animation: spin-slow 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
