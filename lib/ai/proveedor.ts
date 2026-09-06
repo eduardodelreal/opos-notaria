@@ -166,10 +166,16 @@ export function modeloActivo(): string {
  * Respuesta uniforme cuando no se puede llamar al modelo. Mantiene el
  * contrato de antes —`{ error, mensaje }` y 503 sin clave— y añade el 500
  * del proveedor mal escrito, que es un fallo de configuración distinto.
+ *
+ * El motivo se pasa a propósito en vez de recalcularlo aquí: quien llama
+ * ya lo tiene de `proveedorActivo()`, y así el tipo obliga a haber
+ * comprobado antes que de verdad no hay proveedor.
  */
-export function sinClave(motivo?: SinProveedor): Response {
-  const m = motivo ?? { ...(elegido() as SinProveedor) };
-  return Response.json({ error: m.error, mensaje: m.mensaje }, { status: m.estado });
+export function sinClave(motivo: SinProveedor): Response {
+  return Response.json(
+    { error: motivo.error, mensaje: motivo.mensaje },
+    { status: motivo.estado },
+  );
 }
 
 /**

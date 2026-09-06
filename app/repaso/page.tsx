@@ -3,7 +3,15 @@
 import * as React from "react";
 import Link from "next/link";
 import { Brain, Check, Eye, Play, RotateCcw, X } from "lucide-react";
-import { useKeyPoints, useMaterias, useProgresos, useStore, useTemas } from "@/lib/store/store";
+import {
+  ordenDeTriaje,
+  temasOrdenados,
+  useKeyPoints,
+  useMaterias,
+  useProgresos,
+  useStore,
+  useTemas,
+} from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
   Badge,
@@ -29,10 +37,34 @@ export default function Repaso() {
   const perfil = useStore((s) => s.perfil);
   const keypoints = useKeyPoints();
 
-  const cola = React.useMemo(
-    () => colaDeRepaso(temas, progresos, 40),
-    [temas, progresos],
-  );
+  const materias = useMaterias();
+
+  /**
+   * Qué entra en la cola lo decide la urgencia y solo la urgencia: es
+   * triaje, y un tema que todavía no toca no debe colarse porque el
+   * opositor ordene por nota. Lo que sí respeta la preferencia es el ORDEN
+   * en que se le presentan los que ya han entrado.
+   *
+   * Con el criterio por defecto ("numero" → urgencia, ver `ordenDeTriaje`)
+   * esto devuelve exactamente la misma lista que antes.
+   */
+  const cola = React.useMemo(() => {
+    const bruta = colaDeRepaso(temas, progresos, 40);
+    const criterio = ordenDeTriaje(perfil.ordenTemas);
+    if (criterio === "urgencia") return bruta;
+    const posicion = new Map(
+      temasOrdenados(
+        bruta.map((i) => i.tema),
+        materias,
+        criterio,
+        progresos,
+        perfil.diasOxido,
+      ).map((t, i) => [t.id, i]),
+    );
+    return [...bruta].sort(
+      (a, b) => (posicion.get(a.tema.id) ?? 0) - (posicion.get(b.tema.id) ?? 0),
+    );
+  }, [temas, progresos, materias, perfil.ordenTemas, perfil.diasOxido]);
 
   const pendientes = React.useMemo(
     () => keypoints.filter((k) => k.proximoRepaso <= Date.now()),

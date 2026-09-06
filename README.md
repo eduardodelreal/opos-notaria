@@ -92,8 +92,10 @@ Ya está. No hace falta base de datos ni cuenta de nada.
 
 ```bash
 cp .env.example .env.local
-# pon tu clave de https://console.anthropic.com
-#   ANTHROPIC_API_KEY=sk-ant-...
+# pon UNA de las dos claves:
+#   ANTHROPIC_API_KEY=sk-ant-...   (https://console.anthropic.com)
+#   OPENAI_API_KEY=sk-...          (https://platform.openai.com)
+# con las dos puestas manda IA_PROVEEDOR; ver docs/ia.md
 pnpm dev
 ```
 
@@ -159,9 +161,9 @@ Se envía la ficha descrita arriba. **No** se envía el texto completo de tus te
 │      │                                   │
 │      └── fetch ──► /api/ai/* (server)    │
 └───────────────────────┬──────────────────┘
-                        │  ANTHROPIC_API_KEY (solo servidor)
+                        │  clave de IA (solo servidor)
                         ▼
-              API de Anthropic (claude-opus-5)
+        Anthropic (claude-opus-5) u OpenAI (gpt-5.6-sol)
 ```
 
 **Offline-first a propósito.** El opositor estudia en bibliotecas con wifi malo: si se pierde un cante, se pierde el usuario. Todo se escribe primero en IndexedDB y la app funciona entera sin red (salvo la IA). `db/schema.sql` tiene el esquema Postgres/Supabase con RLS listo para cuando toque sincronizar: la nube será una réplica, no la fuente de verdad.

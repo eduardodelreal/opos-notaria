@@ -4,8 +4,8 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import * as React from "react";
 import { idbStorage } from "./persist";
-import { materiasIniciales } from "../data/materias";
-import { PERFIL_INICIAL } from "../data/perfil";
+import { materiasIniciales, materiasOrdenadas } from "../data/materias";
+import { PERFIL_INICIAL, normalizarPerfil } from "../data/perfil";
 import { haySupabase } from "../supabase/config";
 import {
   cambiosDe,
@@ -22,7 +22,7 @@ import {
 import type { Almacen, CambioSync } from "../sync/motor";
 import { ahoraSellado } from "../sync/reloj";
 import { esUuid, uid } from "../utils/id";
-import { calcularProximoRepaso } from "../data/srs";
+import { calcularProximoRepaso, estadoEfectivo, urgencia } from "../data/srs";
 import {
   derivarProgresos,
   notaMediaDeTema,
@@ -32,6 +32,7 @@ import {
 import { temasVivos, vivos, vivosMapa } from "../data/vivos";
 import { sellar } from "./sellado";
 import {
+  migrarAApariencia,
   migrarARelojes,
   migrarAUuid,
   type ExpedienteV1,
@@ -40,6 +41,7 @@ import {
 import type {
   AnalisisCante,
   AudioCante,
+  OrdenTemas,
   Cante,
   ComparacionCante,
   CanteEpigrafe,
@@ -107,6 +109,8 @@ interface Acciones {
   // --- materias ---
   addMateria: (nombre: string, abrev: string, color: string) => Materia;
   updateMateria: (id: string, parcial: Partial<Materia>) => void;
+  /** Sube o baja una materia en el orden de la barra lateral y del mural. */
+  moverMateria: (id: string, direccion: -1 | 1) => void;
   removeMateria: (id: string) => void;
 
   // --- temas ---
@@ -313,6 +317,10 @@ export const useStore = create<Store>()(
       setPerfil: (parcial) =>
         escribir((s) => ({ perfil: { ...s.perfil, ...parcial } })),
 
+      // El botón de la barra lateral sigue siendo un interruptor de dos
+      // posiciones, no un carrusel de tres: desde el sepia lleva al oscuro,
+      // que es de donde se viene. El tercer tono se elige en Ajustes, que es
+      // donde uno decide cómo quiere leer, no de pasada.
       alternarTema: () =>
         escribir((s) => ({
           perfil: {
@@ -348,6 +356,40 @@ export const useStore = create<Store>()(
         escribir((s) => ({
           materias: s.materias.map((m) => (m.id === id ? { ...m, ...parcial } : m)),
         })),
+
+      /**
+       * Intercambia el `orden` de una materia con el de su vecina.
+       *
+       * Se intercambian los DOS valores en vez de reasignar 0..n a toda la
+       * lista: así una reordenación toca dos filas y no cinco, que es lo que
+       * el last-write-wins agradece cuando el opositor reordena en el móvil
+       * y en el portátil sin sincronizar entre medias.
+       *
+       * Se opera sobre las materias VIVAS y ordenadas: la vecina de la
+       * primera no puede ser una tumba con un `orden` intermedio.
+       */
+      moverMateria: (id, direccion) =>
+        escribir((s) => {
+          const orden = materiasOrdenadas(vivos(s.materias));
+          const i = orden.findIndex((m) => m.id === id);
+          const j = i + direccion;
+          if (i < 0 || j < 0 || j >= orden.length) return {};
+          const a = orden[i];
+          const b = orden[j];
+          // Dos materias con el mismo `orden` (importadas, o de la siembra de
+          // dos aparatos) no se moverían nunca al intercambiar: se separan.
+          const ordenA = a.orden ?? 0;
+          const ordenB = b.orden === a.orden ? (a.orden ?? 0) + direccion : (b.orden ?? 0);
+          return {
+            materias: s.materias.map((m) =>
+              m.id === a.id
+                ? { ...m, orden: ordenB }
+                : m.id === b.id
+                  ? { ...m, orden: ordenA }
+                  : m,
+            ),
+          };
+        }),
 
       // Igual que `cascada_borrado_materia()` en el servidor: la materia se
       // marca y arrastra sus temas, que a su vez arrastran lo suyo.
@@ -929,7 +971,10 @@ export const useStore = create<Store>()(
               : (bruto as ExpedienteV2),
           );
           const importado: Expediente = {
-            perfil: { ...PERFIL_INICIAL, ...(d.perfil ?? {}) },
+            // Por `normalizarPerfil` y no por un spread: el fichero lo puede
+            // haber editado cualquiera, y un acento inventado o un cuerpo de
+            // 400px llegarían tal cual al generador de paletas.
+            perfil: normalizarPerfil(d.perfil),
             materias:
               Array.isArray(d.materias) && d.materias.length
                 ? d.materias
@@ -980,13 +1025,15 @@ export const useStore = create<Store>()(
     }),
     {
       name: "opos-notaria",
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => idbStorage),
       // v1 → v2: ids a uuid, referencias reescritas, `Materia.orden`,
       // timestamps de los epígrafes y registros de vuelta.
       // v2 → v3: `actualizado` en todas las entidades mutables y las tumbas
       // de epígrafe plegadas dentro del tema. Ver lib/store/migraciones.ts,
       // donde está el porqué de cada valor elegido.
+      // v3 → v4: los campos de apariencia del perfil, con los valores que
+      // dejan la app exactamente como estaba.
       migrate: (guardado, version) => {
         let estado = guardado as ExpedienteV2;
         if (version < 2) {
@@ -1000,7 +1047,7 @@ export const useStore = create<Store>()(
             JSON.stringify({ fecha: Date.now(), mapa: migrado.mapa }),
           );
         }
-        return migrarARelojes(estado) as unknown as Store;
+        return migrarAApariencia(migrarARelojes(estado)) as unknown as Store;
       },
       partialize: (s) => {
         const { hidratado, ...resto } = s as Estado;
@@ -1104,17 +1151,121 @@ function expedienteDe(s: Estado): Expediente {
   };
 }
 
-/** Selector con memoria estable para listas ordenadas de temas. */
-export function temasOrdenados(temas: Tema[], materias: Materia[]): Tema[] {
-  // El orden lo manda `Materia.orden`, no la posición en el array: es lo
-  // único que sobrevive a un viaje por la tabla de materias.
+/**
+ * Orden de los temas, tal y como lo ha pedido el opositor.
+ *
+ * `criterio` por defecto es "numero", que es EXACTAMENTE lo que hacía esta
+ * función antes de que el orden fuera configurable: materia y número, como
+ * el programa impreso. Cualquier otro criterio reordena DENTRO de cada
+ * materia y deja el bloque de materias donde está — el mural se lee por
+ * materias, y romper esa agrupación por ordenar por nota convertiría la
+ * pantalla en una lista sin mapa.
+ *
+ * `progresos` es opcional porque tres de los cinco criterios no lo
+ * necesitan; sin él, los que sí lo necesitan caen al orden por número en
+ * vez de inventarse un orden aleatorio.
+ *
+ * No es un selector de Zustand: quien la llama la envuelve en `useMemo`.
+ * Devolver un array nuevo dentro de un selector es el bucle infinito de
+ * renders (React #185) que está documentado en app/cante/vivo/page.tsx.
+ */
+export function temasOrdenados(
+  temas: Tema[],
+  materias: Materia[],
+  criterio: OrdenTemas = "numero",
+  progresos: Record<string, ProgresoTema> = {},
+  diasOxido = 45,
+): Tema[] {
+  // El orden de las materias lo manda `Materia.orden`, no la posición en el
+  // array: es lo único que sobrevive a un viaje por la tabla de materias.
   const orden = new Map(materias.map((m) => [m.id, m.orden ?? 0]));
-  return [...temas].sort((a, b) => {
+  const porNumero = (a: Tema, b: Tema) => {
     const oa = orden.get(a.materiaId) ?? 99;
     const ob = orden.get(b.materiaId) ?? 99;
     if (oa !== ob) return oa - ob;
     return a.numero - b.numero;
+  };
+
+  if (criterio === "numero") return [...temas].sort(porNumero);
+
+  const clave = criterioDeTema(criterio, progresos, diasOxido);
+  return [...temas].sort((a, b) => {
+    const oa = orden.get(a.materiaId) ?? 99;
+    const ob = orden.get(b.materiaId) ?? 99;
+    if (oa !== ob) return oa - ob;
+    const ka = clave(a);
+    const kb = clave(b);
+    if (ka !== kb) return ka - kb;
+    // Desempate estable: sin él, dos temas con la misma nota bailarían de
+    // un render a otro y el opositor perdería el sitio donde estaba.
+    return a.numero - b.numero;
   });
+}
+
+/**
+ * El criterio efectivo en las pantallas de TRIAJE (elegir qué cantar, cola
+ * de repaso), donde la pregunta no es "dónde está el tema 47" sino "qué
+ * toca ahora".
+ *
+ * Ahí el orden por número no ayuda a nada, y además esas dos pantallas ya
+ * venían ordenadas por urgencia antes de que el orden fuera configurable.
+ * Así que el valor por defecto —"numero"— conserva la urgencia de siempre y
+ * cualquier otro criterio, que el opositor solo puede haber elegido a
+ * conciencia en Ajustes, sí se respeta. Es la única forma de hacer
+ * configurable el orden sin cambiarle la app a quien no ha tocado nada.
+ */
+export function ordenDeTriaje(criterio: OrdenTemas): OrdenTemas {
+  return criterio === "numero" ? "urgencia" : criterio;
+}
+
+/**
+ * Peso de cada estado cuando se ordena "por estado": primero lo que peor
+ * está. Un opositor que ordena por estado quiere ver el trabajo pendiente,
+ * no la lista de sus éxitos.
+ */
+const PESO_ORDEN_ESTADO: Record<EstadoTema, number> = {
+  oxidado: 0,
+  nuevo: 1,
+  estudiando: 2,
+  cantable: 3,
+  dominado: 4,
+};
+
+/**
+ * Devuelve la clave numérica de ordenación de un tema, siempre "de más
+ * urgente a menos": ascendente en todos los criterios, para que el sentido
+ * de la lista sea el mismo se elija lo que se elija.
+ */
+function criterioDeTema(
+  criterio: Exclude<OrdenTemas, "numero">,
+  progresos: Record<string, ProgresoTema>,
+  diasOxido: number,
+): (t: Tema) => number {
+  switch (criterio) {
+    case "estado":
+      return (t) => {
+        const p = progresos[t.id];
+        // El estado que se ordena es el EFECTIVO, el que se ve pintado en el
+        // mural: un dominado que lleva tres meses sin tocarse va con los
+        // oxidados, no con los dominados (docs/decisiones.md §4).
+        return PESO_ORDEN_ESTADO[p ? estadoEfectivo(p, diasOxido) : "nuevo"];
+      };
+    case "urgencia":
+      // Signo cambiado: más urgencia, más arriba.
+      return (t) => {
+        const p = progresos[t.id];
+        return p ? -urgencia(p) : 0;
+      };
+    case "tiempo":
+      // De menos horas a más: lo que menos has tocado es lo que te falta.
+      return (t) => progresos[t.id]?.segundos ?? 0;
+    case "nota":
+      // Los peor cantados primero. Los que no tienen nota van AL FINAL y no
+      // al principio: "todavía no lo has cantado" no es "lo cantas mal", y
+      // mezclarlos escondería los suspensos reales entre decenas de temas
+      // sin cantar.
+      return (t) => progresos[t.id]?.notaMedia ?? Infinity;
+  }
 }
 
 /**

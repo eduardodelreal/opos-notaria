@@ -5,6 +5,7 @@ import { Play, Timer } from "lucide-react";
 import {
   temasOrdenados,
   useMaterias,
+  useProgresos,
   useSesiones,
   useStore,
   useTemas,
@@ -36,15 +37,21 @@ export default function Cronos() {
   const sesiones = useSesiones();
   const crono = useStore((s) => s.crono);
   const iniciarCrono = useStore((s) => s.iniciarCrono);
+  const perfil = useStore((s) => s.perfil);
+  const progresos = useProgresos();
 
   const [temaId, setTemaId] = React.useState("");
   const [tipo, setTipo] = React.useState<TipoSesion>("estudio");
   const [objetivo, setObjetivo] = React.useState<number | null>(null);
   const [segundos, setSegundos] = React.useState(0);
 
+  // El desplegable de "a qué tema le echas la hora" respeta el criterio del
+  // opositor: quien ordena por tiempo invertido se encuentra arriba los
+  // temas a los que menos horas les ha echado, que es justo lo que busca al
+  // abrir el crono.
   const ordenados = React.useMemo(
-    () => temasOrdenados(temas, materias),
-    [temas, materias],
+    () => temasOrdenados(temas, materias, perfil.ordenTemas, progresos, perfil.diasOxido),
+    [temas, materias, perfil.ordenTemas, progresos, perfil.diasOxido],
   );
 
   React.useEffect(() => {

@@ -19,7 +19,7 @@ La solución no duplica código: **el mismo repositorio desplegado dos veces**.
 
 | | Qué sirve | Variables clave |
 |---|---|---|
-| **Railway** | El mismo build, actuando además de backend de IA | `ANTHROPIC_API_KEY`, `ORIGENES_PERMITIDOS`, las dos `NEXT_PUBLIC_SUPABASE_*` |
+| **Railway** | El mismo build, actuando además de backend de IA | la clave de IA (`ANTHROPIC_API_KEY` u `OPENAI_API_KEY`), `ORIGENES_PERMITIDOS`, las dos `NEXT_PUBLIC_SUPABASE_*` |
 | **Netlify** | La app de cara al usuario | `NEXT_PUBLIC_IA_URL` → URL de Railway |
 
 El navegador carga la app desde Netlify y manda las llamadas de IA
@@ -34,10 +34,14 @@ local y en un despliegue solo-Railway todo funciona sin tocar nada.
 
 | Variable | Railway | Netlify | Notas |
 |---|:---:|:---:|---|
-| `ANTHROPIC_API_KEY` | **sí** | no | Solo la necesita quien atiende las rutas de IA |
+| `IA_PROVEEDOR` | opcional | no | `anthropic` u `openai`. Vacía: se deduce de la clave que haya. Con las dos, manda Anthropic (docs/ia.md) |
+| `ANTHROPIC_API_KEY` | **una de las dos** | no | Solo la necesita quien atiende las rutas de IA |
 | `ANTHROPIC_MODEL` | opcional | no | Por defecto `claude-opus-5` |
-| `TRANSCRIPCION_API_KEY` | opcional | no | Transcribir los cantes. Es **otro proveedor**: la API de Anthropic no acepta audio (docs/ia.md) |
-| `TRANSCRIPCION_URL` | opcional | no | Por defecto `https://api.openai.com/v1`. Cualquier servicio con `POST /audio/transcriptions` |
+| `OPENAI_API_KEY` | **una de las dos** | no | Alternativa a la de Anthropic. Sirve **también** para la transcripción |
+| `OPENAI_MODEL` | opcional | no | Por defecto `gpt-5.6-sol` |
+| `OPENAI_BASE_URL` | opcional | no | Otra URL base (Azure OpenAI, pasarela propia). Tiene que hablar la **Responses API** |
+| `TRANSCRIPCION_API_KEY` | opcional | no | Transcribir los cantes. **Con `OPENAI_API_KEY` puesta no hace falta**: se hereda esa clave contra Whisper |
+| `TRANSCRIPCION_URL` | opcional | no | Por defecto `https://api.openai.com/v1`. Cualquier servicio con `POST /audio/transcriptions`. Si la pones, la clave de OpenAI **deja de heredarse** y hace falta `TRANSCRIPCION_API_KEY` |
 | `TRANSCRIPCION_MODELO` | opcional | no | Por defecto `whisper-1` |
 | `NEXT_PUBLIC_SUPABASE_URL` | sí | sí | **Se incrusta al compilar**. En Railway, además, es lo que enciende la exigencia de sesión en `/api/ai/*` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | sí | sí | **Se incrusta al compilar**. Es pública por diseño; la seguridad la da RLS |
@@ -151,14 +155,15 @@ error. Tras crear una cuenta desde la app, una fila.
 ## 2. Railway
 
 1. Nuevo proyecto desde el repositorio, rama de trabajo.
-2. Variables: `ANTHROPIC_API_KEY`, las dos `NEXT_PUBLIC_SUPABASE_*`
+2. Variables: la clave de IA (`ANTHROPIC_API_KEY` u `OPENAI_API_KEY`; con
+   las dos puestas, `IA_PROVEEDOR` decide), las dos `NEXT_PUBLIC_SUPABASE_*`
    —las mismas que en Netlify: son las que hacen que las rutas de IA solo
    atiendan a quien ha iniciado sesión—, `ORIGENES_PERMITIDOS` con el dominio
    de Netlify. `NEXT_PUBLIC_IA_URL` se deja **sin definir**.
 3. Generar dominio público.
 
 `railway.json` ya fija el builder, los comandos y un healthcheck sobre
-`/api/ai/estado`, que responde 200 incluso sin clave de Anthropic.
+`/api/ai/estado`, que responde 200 incluso sin ninguna clave de IA.
 
 `next start` lee `PORT` de forma nativa, así que no hay que configurar nada.
 
@@ -166,10 +171,12 @@ error. Tras crear una cuenta desde la app, una fila.
 
 ```
 curl https://TU-APP.up.railway.app/api/ai/estado
-# {"disponible":true,"modelo":"claude-opus-5"}
+# {"disponible":true,"proveedor":"anthropic","modelo":"claude-opus-5"}
 ```
 
-`"disponible": false` significa que falta `ANTHROPIC_API_KEY`.
+`"disponible": false` significa que no hay ninguna clave de IA puesta.
+`"proveedor"` dice quién está atendiendo: si esperabas `openai` y pone
+`anthropic`, tienes las dos claves y falta `IA_PROVEEDOR=openai`.
 
 ---
 
@@ -178,7 +185,7 @@ curl https://TU-APP.up.railway.app/api/ai/estado
 1. Nuevo sitio desde el mismo repositorio.
 2. Variables: las dos `NEXT_PUBLIC_SUPABASE_*` y `NEXT_PUBLIC_IA_URL` con la
    URL de Railway **sin barra final**.
-   `ANTHROPIC_API_KEY` **no** hace falta aquí.
+   La clave de IA **no** hace falta aquí.
 3. Desplegar. `netlify.toml` ya trae el comando, la versión de Node y el
    plugin de Next.
 
@@ -203,15 +210,20 @@ Desde el dominio de Netlify:
 
 ## Qué esperar
 
-- **Sin `ANTHROPIC_API_KEY`** la app funciona entera; los botones de IA lo
+- **Sin ninguna clave de IA** la app funciona entera; los botones de IA lo
   avisan en pantalla.
-- **Sin `TRANSCRIPCION_API_KEY`** el cante se graba, se guarda y se escucha
-  igual; solo se apagan transcribir y comparar, diciendo por qué.
+- **Con `IA_PROVEEDOR` mal escrito** las rutas devuelven un 500 que dice qué
+  se ha leído y qué valores válidos hay. No se cae en silencio al otro
+  proveedor a propósito: sería gastar dinero donde no toca.
+- **Sin proveedor de transcripción** el cante se graba, se guarda y se
+  escucha igual; solo se apagan transcribir y comparar, diciendo por qué.
+  Con `OPENAI_API_KEY` puesta, la transcripción ya funciona sin configurar
+  nada más.
 - **Sin credenciales de Supabase** la app funciona entera en local, sin
   login ni sincronización. Las grabaciones se quedan en el navegador, y las
   rutas de IA quedan **abiertas** a quien sepa la URL: es lo correcto en
   local o para un despliegue de un solo opositor, y una mala idea en un
-  dominio público con clave de Anthropic puesta.
+  dominio público con una clave de IA puesta.
 - **Con Supabase configurado y sin sesión iniciada** la app funciona entera
   menos la IA, y lo avisa antes de dejar pulsar: "Inicia sesión para usar el
   preparador".
@@ -225,7 +237,7 @@ Desde el dominio de Netlify:
 |---|---|
 | El chat se corta a media frase | Se está llamando a Netlify en vez de a Railway: `NEXT_PUBLIC_IA_URL` mal puesta o declarada después de compilar |
 | Error de CORS en la consola | `ORIGENES_PERMITIDOS` en Railway no incluye el dominio de Netlify |
-| Los botones de IA salen apagados | Falta `ANTHROPIC_API_KEY` en Railway, o `NEXT_PUBLIC_IA_URL` apunta a un sitio que no responde |
+| Los botones de IA salen apagados | Falta la clave de IA en Railway (`ANTHROPIC_API_KEY` u `OPENAI_API_KEY`), o `NEXT_PUBLIC_IA_URL` apunta a un sitio que no responde |
 | Todas las llamadas de IA dan 401 `sin_sesion` estando dentro | Netlify y Railway apuntan a proyectos de Supabase distintos, o Railway se compiló sin las `NEXT_PUBLIC_SUPABASE_*` y luego se añadieron. Compruébalo con `curl .../api/ai/estado -H "Authorization: Bearer <token>"`: `requiereSesion` y `sesion` tienen que ser los dos `true` |
 | La IA dice "Inicia sesión para usar el preparador" y sí has entrado | La sesión caducó y el navegador no la ha renovado: recarga. Si persiste, el reloj del servidor o el proyecto de Supabase no coinciden |
 | No aparece el bloque de sesión | Faltan las `NEXT_PUBLIC_SUPABASE_*`, o se declararon después de compilar |

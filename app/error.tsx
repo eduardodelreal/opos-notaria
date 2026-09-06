@@ -68,7 +68,7 @@ export default function Error({
         <div className="flex flex-wrap items-center justify-center gap-2.5 mt-8">
           <button
             onClick={reset}
-            className="inline-flex items-center gap-2 h-10 px-4 rounded-[10px] border border-transparent bg-[var(--lacre)] text-white text-sm font-medium hover:bg-[var(--lacre-bright)] transition-colors"
+            className="inline-flex items-center gap-2 h-10 px-4 rounded-[10px] border border-transparent bg-[var(--lacre)] text-[var(--lacre-fg)] text-sm font-medium hover:bg-[var(--lacre-bright)] transition-colors"
           >
             <RotateCcw className="size-4" />
             Reintentar

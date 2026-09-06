@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { useStore, useTemas } from "@/lib/store/store";
-import { cx } from "./ui";
+import { TINTA_SOBRE_LACRE, cx } from "./ui";
 import { CronoFlotante } from "./CronoFlotante";
 import { nombreVisible, useSesion } from "./Sesion";
 import { IndicadorSync } from "./Sincronizacion";
@@ -215,8 +215,9 @@ function BloqueSesion() {
     <div className="flex items-center gap-1">
       <div className="flex-1 min-w-0 flex items-center gap-2.5 h-10 px-3">
         <span
-          className="size-[22px] shrink-0 grid place-items-center rounded-full text-[10px] font-semibold text-white/95"
+          className="size-[22px] shrink-0 grid place-items-center rounded-full text-[10px] font-semibold"
           style={{
+            color: TINTA_SOBRE_LACRE,
             background:
               "linear-gradient(145deg, var(--lacre-bright), var(--lacre))",
           }}
@@ -256,7 +257,10 @@ function Sello() {
             "linear-gradient(145deg, var(--lacre-bright), var(--lacre))",
         }}
       />
-      <span className="relative font-serif text-[15px] font-semibold text-white/95">
+      <span
+        className="relative font-serif text-[15px] font-semibold"
+        style={{ color: TINTA_SOBRE_LACRE }}
+      >
         N
       </span>
     </span>

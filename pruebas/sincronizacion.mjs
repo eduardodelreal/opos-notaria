@@ -239,6 +239,7 @@ const { derivarProgresos } = await import("../lib/data/derivados.ts");
 const { desfaseAplicable, medirDesfase, muestraDeRespuesta } = await import(
   "../lib/sync/reloj.ts"
 );
+const { apariencia } = await import("../lib/data/apariencia.ts");
 
 const control = {};
 const nube = transportePsql(USUARIO, control);
@@ -325,6 +326,78 @@ prueba("el perfil del portátil llega al móvil", () => {
   assert.equal(estadoDe("movil").perfil.nombre, "Marta");
   assert.equal(estadoDe("movil").perfil.objetivoHorasSemana, 52);
 });
+
+/* ------------------------------------------------------------------
+   2 bis · La personalización viaja como cualquier otro dato
+
+   El opositor configura la app una tarde en el portátil de casa y al día
+   siguiente abre el de la biblioteca: tiene que encontrársela igual. Por
+   eso la apariencia vive en `perfiles` y no en el localStorage de cada
+   navegador, y por eso se comprueba aquí, contra columnas de verdad: un
+   campo que no existiera en la tabla se perdería en silencio.
+   ------------------------------------------------------------------ */
+
+console.log("\n== la personalización viaja entre dispositivos ==");
+
+const APARIENCIA = {
+  tema: "sepia",
+  acento: "personal",
+  acentoPersonal: "#2f6fb0",
+  fuenteTemas: "sans",
+  tamanoTema: 20,
+  densidad: "compacta",
+  ordenTemas: "urgencia",
+  vistaPrograma: "lista",
+};
+
+await en("portatil", (st) => st.setPerfil(APARIENCIA));
+await sincroniza("portatil", nube);
+
+prueba("la apariencia sube a `perfiles`, columna a columna", () => {
+  const [p] = enLaNube(`select to_jsonb(t.*) from public.perfiles t`);
+  assert.equal(p.tema, "sepia");
+  assert.equal(p.acento, "personal");
+  assert.equal(p.acento_personal, "#2f6fb0");
+  assert.equal(p.fuente_temas, "sans");
+  assert.equal(Number(p.tamano_tema), 20);
+  assert.equal(p.densidad, "compacta");
+  assert.equal(p.orden_temas, "urgencia");
+  assert.equal(p.vista_programa, "lista");
+});
+
+await sincroniza("movil", nube);
+
+prueba("el móvil abre con exactamente la misma app", () => {
+  const movil = estadoDe("movil").perfil;
+  for (const [campo, valor] of Object.entries(APARIENCIA)) {
+    assert.equal(movil[campo], valor, `${campo}: ${movil[campo]} ≠ ${valor}`);
+  }
+  // Lo que de verdad importa no es el campo, es lo que se pinta: las
+  // mismas clases y las mismas variables CSS en los dos aparatos.
+  assert.deepEqual(apariencia(movil), apariencia(estadoDe("portatil").perfil));
+});
+
+prueba("el acento personal bajado de la nube se lee sobre el fondo", () => {
+  const a = apariencia(estadoDe("movil").perfil);
+  assert.ok(a.vars["--lacre"], "no hay acento aplicado");
+  assert.ok(a.clases.includes("sepia") && a.clases.includes("compacta"));
+});
+
+// Se deja el perfil como estaba para no arrastrar la personalización al
+// resto de las pruebas, que hablan de otra cosa.
+await en("portatil", (st) =>
+  st.setPerfil({
+    tema: "dark",
+    acento: "lacre",
+    fuenteTemas: "serif",
+    tamanoTema: 17,
+    densidad: "normal",
+    ordenTemas: "numero",
+    vistaPrograma: "mural",
+  }),
+);
+await sincroniza("portatil", nube);
+await sincroniza("movil", nube);
 
 /* ------------------------------------------------------------------
    3 · Las horas de dos dispositivos que estudian sin sincronizar

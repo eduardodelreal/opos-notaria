@@ -289,7 +289,13 @@ await paso("los datos sobreviven a la recarga (IndexedDB)", async () => {
   if (n < 10) throw new Error(`tras recargar solo hay ${n} temas`);
 });
 
-// 10. Tema claro
+// 10. Apariencia: lo que el opositor elige tiene que verse de verdad
+//
+// Nada de comprobar que el control existe: eso lo pasaría una pantalla de
+// ajustes que no estuviera enchufada a nada. Aquí se leen ESTILOS
+// COMPUTADOS —el fondo real del body, el color real del botón primario, la
+// tipografía real del texto del tema— y se comprueba que sobreviven a una
+// recarga sin parpadeo.
 await pg.goto(`${BASE}/ajustes`, { waitUntil: "networkidle" });
 await paso("cambio a tema claro", async () => {
   await pg.getByRole("button", { name: "Claro" }).click();
@@ -300,6 +306,221 @@ await paso("cambio a tema claro", async () => {
 await pg.goto(`${BASE}/`, { waitUntil: "networkidle" });
 await pg.waitForTimeout(700);
 await pg.screenshot({ path: `${OUT}/09-claro.png` });
+
+// Lee variables y estilos computados de la página, ya resueltos por el
+// navegador: es la única forma de saber que el CSS ha llegado a la pantalla.
+const estilos = () =>
+  pg.evaluate(() => {
+    const html = getComputedStyle(document.documentElement);
+    const boton = document.querySelector(".card button, button");
+    return {
+      clases: document.documentElement.className,
+      lacre: html.getPropertyValue("--lacre").trim(),
+      cuerpo: html.getPropertyValue("--tema-cuerpo").trim(),
+      fuente: html.getPropertyValue("--tema-fuente").trim(),
+      fondo: getComputedStyle(document.body).backgroundColor,
+      espaciado: html.getPropertyValue("--spacing").trim(),
+      boton: boton ? getComputedStyle(boton).backgroundColor : null,
+    };
+  });
+
+await pg.goto(`${BASE}/ajustes`, { waitUntil: "networkidle" });
+const antesApariencia = await estilos();
+
+await paso("el tono sepia repinta el fondo de verdad", async () => {
+  await pg.locator("[data-tono=sepia]").click();
+  await pg.waitForTimeout(400);
+  const e = await estilos();
+  if (!e.clases.includes("sepia")) throw new Error(`clases: ${e.clases}`);
+  // #f2ebdc, el papel cálido de :root.sepia en app/globals.css.
+  if (e.fondo !== "rgb(242, 235, 220)") throw new Error(`fondo del body: ${e.fondo}`);
+});
+
+await paso("el acento elegido llega al color del botón primario", async () => {
+  await pg.locator("[data-acento=jade]").click();
+  await pg.waitForTimeout(400);
+  const e = await estilos();
+  if (e.lacre === antesApariencia.lacre)
+    throw new Error(`el acento no ha cambiado: sigue en ${e.lacre}`);
+  const primario = await pg
+    .locator("button:has-text('Empezar el cante')")
+    .first()
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  const esperado = await pg.evaluate((hex) => {
+    const d = document.createElement("div");
+    d.style.color = hex;
+    document.body.appendChild(d);
+    const c = getComputedStyle(d).color;
+    d.remove();
+    return c;
+  }, e.lacre);
+  if (primario !== esperado)
+    throw new Error(`el botón pinta ${primario} y el acento dice ${esperado}`);
+});
+
+await paso("un acento ilegible se corrige solo en vez de aplicarse tal cual", async () => {
+  await pg.locator("[data-acento=personal]").click();
+  // Amarillo pálido sobre papel: invisible. La app tiene que oscurecerlo.
+  await pg.locator("input[aria-label='Color del acento']").fill("#fafad0");
+  await pg.waitForTimeout(600);
+  const medida = await pg.evaluate(() => {
+    const html = getComputedStyle(document.documentElement);
+    const pinta = (c) => {
+      const d = document.createElement("div");
+      d.style.color = c;
+      document.body.appendChild(d);
+      const v = getComputedStyle(d).color;
+      d.remove();
+      return v.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
+    };
+    const lum = (rgb) => {
+      const [r, g, b] = rgb.map((v) => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const a = lum(pinta(html.getPropertyValue("--lacre").trim()));
+    const b = lum(pinta(getComputedStyle(document.body).backgroundColor));
+    const [alto, bajo] = a >= b ? [a, b] : [b, a];
+    return {
+      aplicado: html.getPropertyValue("--lacre").trim(),
+      contraste: (alto + 0.05) / (bajo + 0.05),
+    };
+  });
+  if (medida.aplicado.toLowerCase() === "#fafad0")
+    throw new Error("se ha aplicado el color ilegible tal cual");
+  // 3:1 es el umbral de la WCAG 2.1 para elementos no textuales, que es lo
+  // que este color rellena (botones, bordes, puntos de gráfica).
+  if (medida.contraste < 3)
+    throw new Error(`sigue ilegible: ${medida.contraste.toFixed(2)}:1`);
+  // Se vuelve a un acento de la paleta para el resto de la prueba.
+  await pg.locator("[data-acento=jade]").click();
+  await pg.waitForTimeout(300);
+});
+
+await paso("la tipografía y el cuerpo del texto de los temas cambian", async () => {
+  await pg.locator("[data-fuente=sans]").click();
+  await pg.locator("input[aria-label='Cuerpo del texto de los temas']").fill("22");
+  // El guardado va diferido para no escribir en IndexedDB en cada píxel de
+  // arrastre; se le da margen.
+  await pg.waitForTimeout(700);
+  const e = await estilos();
+  if (e.cuerpo !== "1.375rem") throw new Error(`--tema-cuerpo: ${e.cuerpo}`);
+  if (!e.fuente.includes("Inter")) throw new Error(`--tema-fuente: ${e.fuente}`);
+});
+
+await paso("y se ven en el texto del tema, no solo en la variable", async () => {
+  await pg.goto(`${BASE}/tema/${temaId}`, { waitUntil: "networkidle" });
+  await pg.getByText("Tiempo invertido").waitFor({ timeout: 8000 });
+  // El texto del epígrafe está plegado: se despliega para poder medirlo.
+  await pg.locator("button[aria-label='Ver texto']").first().click();
+  const caja = pg.locator(".prose-tema").first();
+  await caja.waitFor({ timeout: 8000 });
+  const tipo = await caja.evaluate((el) => {
+    const c = getComputedStyle(el);
+    return { familia: c.fontFamily, tamano: c.fontSize };
+  });
+  if (tipo.tamano !== "22px") throw new Error(`cuerpo del temario: ${tipo.tamano}`);
+  // Ojo: la pila sans acaba en "sans-serif", así que buscar /serif/ daría
+  // siempre positivo. Lo que hay que mirar es la primera familia.
+  if (/Newsreader/i.test(tipo.familia) || !/Inter/i.test(tipo.familia))
+    throw new Error(`sigue en serif: ${tipo.familia}`);
+});
+
+await paso("la densidad compacta encoge la retícula de verdad", async () => {
+  await pg.goto(`${BASE}/ajustes`, { waitUntil: "networkidle" });
+  const antes = await pg
+    .locator(".card")
+    .first()
+    .evaluate((el) => getComputedStyle(el).paddingTop);
+  await pg.locator("[data-densidad=compacta]").click();
+  await pg.waitForTimeout(400);
+  const despues = await pg
+    .locator(".card")
+    .first()
+    .evaluate((el) => getComputedStyle(el).paddingTop);
+  if (parseFloat(despues) >= parseFloat(antes))
+    throw new Error(`la tarjeta no ha encogido: ${antes} → ${despues}`);
+  const e = await estilos();
+  if (!e.clases.includes("compacta")) throw new Error(`clases: ${e.clases}`);
+});
+await pg.screenshot({ path: `${OUT}/10-apariencia.png`, fullPage: true });
+
+await paso("la apariencia sobrevive a la recarga y se aplica ANTES de hidratar", async () => {
+  const esperado = await estilos();
+  // `domcontentloaded` es antes de que React hidrate: si lo que se lee aquí
+  // ya está bien, el guion antiparpadeo del <head> ha hecho su trabajo y el
+  // opositor no ve un fogonazo del tema anterior en cada recarga.
+  await pg.reload({ waitUntil: "domcontentloaded" });
+  const temprano = await pg.evaluate(() => ({
+    clases: document.documentElement.className,
+    lacre: document.documentElement.style.getPropertyValue("--lacre").trim(),
+    cuerpo: document.documentElement.style.getPropertyValue("--tema-cuerpo").trim(),
+  }));
+  if (!temprano.clases.includes("sepia") || !temprano.clases.includes("compacta"))
+    throw new Error(`clases antes de hidratar: "${temprano.clases}"`);
+  if (temprano.lacre !== esperado.lacre)
+    throw new Error(`acento antes de hidratar: ${temprano.lacre} ≠ ${esperado.lacre}`);
+  if (temprano.cuerpo !== "1.375rem")
+    throw new Error(`cuerpo antes de hidratar: ${temprano.cuerpo}`);
+  await pg.waitForLoadState("networkidle");
+  const ahora = await estilos();
+  if (ahora.lacre !== esperado.lacre || ahora.fondo !== esperado.fondo)
+    throw new Error("la apariencia no ha sobrevivido a la recarga");
+});
+
+await paso("el orden de los temas elegido manda en el programa", async () => {
+  await pg.goto(`${BASE}/ajustes`, { waitUntil: "networkidle" });
+  await pg.getByLabel("Orden de los temas").selectOption("nota");
+  await pg.waitForTimeout(300);
+  await pg.goto(`${BASE}/programa`, { waitUntil: "networkidle" });
+  await pg.waitForTimeout(500);
+  // El único tema cantado en esta prueba es el 9 (la hipoteca, con un 6):
+  // ordenando por nota tiene que ponerse el primero, por delante del tema 1.
+  const primero = await pg.locator('a[href^="/tema/"]').first().getAttribute("href");
+  if (!primero.endsWith(temaId))
+    throw new Error(`ordenando por nota el primero debería ser el tema cantado`);
+
+  await pg.goto(`${BASE}/ajustes`, { waitUntil: "networkidle" });
+  await pg.getByLabel("Orden de los temas").selectOption("numero");
+  await pg.waitForTimeout(300);
+  await pg.goto(`${BASE}/programa`, { waitUntil: "networkidle" });
+  await pg.waitForTimeout(500);
+  const deVuelta = await pg.locator('a[href^="/tema/"]').first().getAttribute("href");
+  if (deVuelta === primero)
+    throw new Error("volviendo al orden por número la lista no ha cambiado");
+});
+
+await paso("las materias se pueden reordenar desde el programa", async () => {
+  await pg.goto(`${BASE}/programa`, { waitUntil: "networkidle" });
+  await pg.getByRole("button", { name: "Materias" }).click();
+  const nombres = () =>
+    pg.locator("input[type=color]").evaluateAll((els) =>
+      els.map((e) => e.getAttribute("aria-label")),
+    );
+  const antes = await nombres();
+  await pg.locator("button[aria-label^='Bajar ']").first().click();
+  await pg.waitForTimeout(400);
+  const despues = await nombres();
+  if (antes[0] === despues[0])
+    throw new Error(`la materia no ha bajado: ${antes[0]} sigue la primera`);
+  if (despues[1] !== antes[0])
+    throw new Error(`orden raro tras bajar: ${JSON.stringify(despues)}`);
+  await pg.keyboard.press("Escape");
+});
+
+// Se deja la app como estaba para las comprobaciones que quedan.
+await pg.goto(`${BASE}/ajustes`, { waitUntil: "networkidle" });
+await pg.getByRole("button", { name: "Volver a la de siempre" }).click();
+await pg.waitForTimeout(400);
+await paso("«volver a la de siempre» devuelve la app original", async () => {
+  const e = await estilos();
+  if (e.clases.trim() !== "") throw new Error(`quedan clases: "${e.clases}"`);
+  if (e.lacre.toLowerCase() !== "#a82f3c") throw new Error(`acento: ${e.lacre}`);
+  if (e.cuerpo !== "1.0625rem") throw new Error(`cuerpo: ${e.cuerpo}`);
+  if (e.espaciado !== "0.25rem") throw new Error(`espaciado: ${e.espaciado}`);
+});
 
 // 11. Sin clave, los botones de IA avisan
 await pg.goto(`${BASE}/chat`, { waitUntil: "networkidle" });

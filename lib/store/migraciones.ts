@@ -1,4 +1,5 @@
 import { uid } from "../utils/id";
+import { normalizarPerfil } from "../data/perfil";
 import type {
   Cante,
   Epigrafe,
@@ -417,4 +418,26 @@ export function migrarARelojes(guardado: ExpedienteV2): ExpedienteV3 {
     // El array suelto desaparece: sus tumbas ya están dentro de los temas.
     epigrafesBorrados: undefined,
   };
+}
+
+
+/* ============================================================
+   v3 → v4: la apariencia
+
+   El perfil gana los campos de personalización (acento, tipografía y
+   cuerpo del texto de los temas, densidad, orden de los temas, vista del
+   programa). Un expediente guardado antes de esto no los trae, y hay que
+   rellenarlos con los valores que reproducen la app tal y como la tenía
+   ese opositor ayer: los de PERFIL_INICIAL. Si se dejaran en `undefined`,
+   `apariencia()` recibiría un acento que no existe y el generador de
+   paletas trabajaría sobre basura.
+
+   El saneado va por `normalizarPerfil()` y no por un `{...defectos,
+   ...guardado}` a pelo porque esto mismo lo llama la importación de una
+   copia, y un fichero JSON editado a mano puede traer un `tamanoTema` de
+   400: hay un único sitio donde se decide qué es un perfil válido.
+   ============================================================ */
+
+export function migrarAApariencia(guardado: ExpedienteV3): ExpedienteV3 {
+  return { ...guardado, perfil: normalizarPerfil(guardado.perfil) };
 }

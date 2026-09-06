@@ -1,10 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { Download, Moon, Sun, Trash2, Upload } from "lucide-react";
+import Link from "next/link";
+import {
+  ArrowDownWideNarrow,
+  BookOpenText,
+  Download,
+  Moon,
+  Rows3,
+  Sun,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { useCantes, useKeyPoints, useSesiones, useStore, useTemas } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
+  Badge,
   Boton,
   Campo,
   Card,
@@ -16,7 +27,18 @@ import {
 import { AvisoSinCuenta, TarjetaSincronizacion } from "@/components/Sincronizacion";
 import { AjustesAvisos } from "@/components/AjustesAvisos";
 import { vaciarAudios } from "@/lib/audio/almacen";
-import type { Perfil } from "@/lib/data/types";
+import {
+  ACENTOS,
+  ACENTO_PERSONAL_INICIAL,
+  ORDENES,
+  TAMANO_TEMA_INICIAL,
+  TAMANO_TEMA_MAXIMO,
+  TAMANO_TEMA_MINIMO,
+  TONOS,
+  paletaDe,
+  veredictoAcento,
+} from "@/lib/data/apariencia";
+import { ESTADOS, type Perfil, type Tono } from "@/lib/data/types";
 
 export default function Ajustes() {
   const perfil = useStore((s) => s.perfil);
@@ -168,32 +190,44 @@ export default function Ajustes() {
         <AjustesAvisos />
 
         {/* ------------------------------ Apariencia -------------------------- */}
+        <BloqueApariencia />
+
+        {/* ---------------------------- Cómo se ordena ------------------------ */}
         <Card>
-          <TituloSeccion>Apariencia</TituloSeccion>
-          <div className="grid grid-cols-2 gap-3">
-            {(
-              [
-                { id: "dark", label: "Oscuro", icono: Moon },
-                { id: "light", label: "Claro", icono: Sun },
-              ] as const
-            ).map((t) => {
-              const Icono = t.icono;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setPerfil({ tema: t.id })}
-                  className={cx(
-                    "h-20 rounded-[12px] border flex flex-col items-center justify-center gap-2 transition-all",
-                    perfil.tema === t.id
-                      ? "border-[var(--laton)] bg-[var(--laton-soft)]"
-                      : "border-[var(--border)] text-muted hover:text-fg",
-                  )}
-                >
-                  <Icono className="size-5" />
-                  <span className="text-[13px]">{t.label}</span>
-                </button>
-              );
-            })}
+          <TituloSeccion>Cómo se listan tus temas</TituloSeccion>
+          <div className="space-y-4">
+            <Selector
+              etiqueta="Orden de los temas"
+              value={perfil.ordenTemas}
+              onChange={(e) =>
+                setPerfil({ ordenTemas: e.target.value as Perfil["ordenTemas"] })
+              }
+            >
+              {ORDENES.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label} — {o.pista}
+                </option>
+              ))}
+            </Selector>
+            <p className="text-[12.5px] text-muted leading-relaxed">
+              Vale para el programa, el cante, el crono y el repaso. Dentro de cada
+              materia: el mural se lee por materias y eso no cambia.{" "}
+              <span className="text-subtle">
+                En el cante y en el repaso, que son colas de «qué toca ahora», el
+                orden por número se sustituye por la urgencia; cualquier otro
+                criterio que elijas aquí sí manda también allí.
+              </span>
+            </p>
+            <div className="hairline" />
+            <p className="text-[12.5px] text-muted leading-relaxed">
+              El orden de las <strong className="font-medium text-fg">materias</strong>{" "}
+              se cambia en{" "}
+              <Link href="/programa" className="text-[var(--laton)] hover:underline">
+                Programa → Materias
+              </Link>
+              , con las flechas de cada fila. Manda en el mural, en los filtros y en
+              todas las listas.
+            </p>
           </div>
         </Card>
 
@@ -293,5 +327,352 @@ export default function Ajustes() {
 
       {dialogo}
     </>
+  );
+}
+
+/* ========================================================================== */
+/*                                Apariencia                                  */
+/* ========================================================================== */
+
+/**
+ * Valor que se pinta al instante y se guarda en el perfil cuando reposa.
+ *
+ * Lo necesitan el selector de color y el deslizador del cuerpo de texto:
+ * los dos disparan `change` en cada píxel de arrastre, y cada escritura del
+ * perfil serializa el expediente entero a IndexedDB y encola una fila para
+ * sincronizar. Sin esto, arrastrar un deslizador dos segundos son cien
+ * escrituras. La vista previa usa el valor local, así que el opositor ve el
+ * cambio mientras arrastra; lo que espera es el guardado.
+ */
+function useDiferido<T>(
+  valor: T,
+  guardar: (v: T) => void,
+  ms = 200,
+): readonly [T, (v: T) => void] {
+  const [local, setLocal] = React.useState(valor);
+  const guardarRef = React.useRef(guardar);
+  guardarRef.current = guardar;
+
+  // Si el valor cambia por fuera (otro dispositivo, importar una copia), el
+  // control tiene que seguirlo.
+  React.useEffect(() => setLocal(valor), [valor]);
+
+  React.useEffect(() => {
+    if (local === valor) return;
+    const id = setTimeout(() => guardarRef.current(local), ms);
+    return () => clearTimeout(id);
+  }, [local, valor, ms]);
+
+  return [local, setLocal] as const;
+}
+
+const ICONO_TONO: Record<Tono, React.ComponentType<{ className?: string }>> = {
+  dark: Moon,
+  light: Sun,
+  sepia: BookOpenText,
+};
+
+function BloqueApariencia() {
+  const perfil = useStore((s) => s.perfil);
+  const setPerfil = useStore((s) => s.setPerfil);
+
+  const [colorLibre, setColorLibre] = useDiferido(
+    perfil.acentoPersonal ?? ACENTO_PERSONAL_INICIAL,
+    (v) => setPerfil({ acentoPersonal: v, acento: "personal" }),
+  );
+  const [cuerpo, setCuerpo] = useDiferido(perfil.tamanoTema, (v) =>
+    setPerfil({ tamanoTema: v }),
+  );
+
+  // El color de cada botón de acento es el que se va a aplicar de verdad,
+  // ya corregido para este tono: la muestra no puede prometer un color y
+  // pintar otro.
+  const muestras = React.useMemo(
+    () =>
+      new Map(
+        ACENTOS.map((a) => [
+          a.id,
+          paletaDe({
+            ...perfil,
+            acento: a.id,
+            acentoPersonal: a.id === "personal" ? colorLibre : perfil.acentoPersonal,
+          }),
+        ]),
+      ),
+    [perfil, colorLibre],
+  );
+
+  const veredicto = React.useMemo(
+    () => veredictoAcento(colorLibre, perfil.tema),
+    [colorLibre, perfil.tema],
+  );
+
+  return (
+    <Card className="lg:col-span-2">
+      <TituloSeccion accion={
+        <button
+          onClick={() =>
+            setPerfil({
+              tema: "dark",
+              acento: "lacre",
+              fuenteTemas: "serif",
+              tamanoTema: TAMANO_TEMA_INICIAL,
+              densidad: "normal",
+            })
+          }
+          className="text-[11.5px] text-subtle hover:text-fg transition-colors"
+        >
+          Volver a la de siempre
+        </button>
+      }>
+        Apariencia
+      </TituloSeccion>
+
+      <div className="grid lg:grid-cols-[1fr_320px] gap-6">
+        <div className="space-y-6">
+          {/* ---------------------------- tono base ------------------------- */}
+          <Grupo
+            titulo="Fondo"
+            pista="El sepia es papel cálido: para leer temas durante horas cansa menos que el blanco"
+          >
+            <div className="grid grid-cols-3 gap-2.5">
+              {TONOS.map((t) => {
+                const Icono = ICONO_TONO[t.id];
+                return (
+                  <button
+                    key={t.id}
+                    data-tono={t.id}
+                    onClick={() => setPerfil({ tema: t.id })}
+                    title={t.descripcion}
+                    className={cx(
+                      "h-[74px] rounded-[12px] border flex flex-col items-center justify-center gap-2 transition-all",
+                      perfil.tema === t.id
+                        ? "border-[var(--laton)] bg-[var(--laton-soft)] text-fg"
+                        : "border-[var(--border)] text-muted hover:text-fg",
+                    )}
+                  >
+                    <Icono className="size-5" />
+                    <span className="text-[13px]">{t.nombre}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </Grupo>
+
+          {/* ------------------------------ acento -------------------------- */}
+          <Grupo
+            titulo="Acento"
+            pista="El color del lacre. El latón dorado no se toca: es lo que hace que la app siga siendo la misma"
+          >
+            <div className="flex flex-wrap gap-2">
+              {ACENTOS.map((a) => {
+                const p = muestras.get(a.id)!;
+                const activo = perfil.acento === a.id;
+                return (
+                  <button
+                    key={a.id}
+                    data-acento={a.id}
+                    onClick={() =>
+                      setPerfil(
+                        a.id === "personal"
+                          ? { acento: "personal", acentoPersonal: colorLibre }
+                          : { acento: a.id },
+                      )
+                    }
+                    title={a.descripcion}
+                    className={cx(
+                      "h-9 pl-2 pr-3 rounded-full border inline-flex items-center gap-2 text-[12.5px] transition-all",
+                      activo
+                        ? "border-[var(--border-strong)] bg-[var(--surface-2)] text-fg"
+                        : "border-[var(--border)] text-muted hover:text-fg",
+                    )}
+                  >
+                    <span
+                      className="size-5 rounded-full shrink-0"
+                      style={{
+                        background: p.lacre,
+                        boxShadow: activo ? `0 0 0 2px var(--surface), 0 0 0 3.5px ${p.lacre}` : undefined,
+                      }}
+                    />
+                    {a.nombre}
+                  </button>
+                );
+              })}
+            </div>
+
+            {perfil.acento === "personal" && (
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <input
+                  type="color"
+                  aria-label="Color del acento"
+                  value={colorLibre}
+                  onChange={(e) => setColorLibre(e.target.value)}
+                  className="size-9 rounded-md bg-transparent border-0 cursor-pointer p-0 shrink-0"
+                />
+                <p className="text-[12px] text-muted leading-relaxed flex-1 min-w-[220px]">
+                  {veredicto.corregido ? (
+                    <>
+                      Ese color no se leía sobre este fondo, así que se ha ajustado a{" "}
+                      <code className="text-fg">{veredicto.aplicado}</code>. Contraste{" "}
+                      {veredicto.contrasteFondo.toFixed(1)}:1.
+                    </>
+                  ) : (
+                    <>
+                      Contraste {veredicto.contrasteFondo.toFixed(1)}:1 contra el fondo.
+                      Se lee bien, va tal cual.
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
+          </Grupo>
+
+          {/* --------------------------- tipografía ------------------------- */}
+          <Grupo
+            titulo="Texto de los temas"
+            pista="Solo cambia el texto que estudias: los titulares y la interfaz se quedan como están"
+          >
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--surface-2)] border border-[var(--border)]">
+                {(
+                  [
+                    { id: "serif", label: "Serif" },
+                    { id: "sans", label: "Sans" },
+                  ] as const
+                ).map((f) => (
+                  <button
+                    key={f.id}
+                    data-fuente={f.id}
+                    onClick={() => setPerfil({ fuenteTemas: f.id })}
+                    className={cx(
+                      "h-8 px-3.5 rounded-lg text-[13px] font-medium transition-all",
+                      perfil.fuenteTemas === f.id
+                        ? "bg-[var(--surface)] text-fg shadow-sm"
+                        : "text-muted hover:text-fg",
+                    )}
+                    style={{
+                      fontFamily: f.id === "serif" ? "var(--font-serif)" : "var(--font-ui)",
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              <label className="flex-1 min-w-[220px] flex items-center gap-3">
+                <span className="text-[12px] text-muted shrink-0">Cuerpo</span>
+                <input
+                  type="range"
+                  aria-label="Cuerpo del texto de los temas"
+                  min={TAMANO_TEMA_MINIMO}
+                  max={TAMANO_TEMA_MAXIMO}
+                  step={1}
+                  value={cuerpo}
+                  onChange={(e) => setCuerpo(Number(e.target.value))}
+                  className="flex-1 accent-[var(--lacre-bright)]"
+                />
+                <span className="numeric text-[12.5px] text-subtle w-10 text-right shrink-0">
+                  {cuerpo}px
+                </span>
+              </label>
+            </div>
+          </Grupo>
+
+          {/* ---------------------------- densidad -------------------------- */}
+          <Grupo
+            titulo="Densidad"
+            pista="La compacta encoge el aire de la interfaz, no la letra: cabe más en pantalla"
+          >
+            <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--surface-2)] border border-[var(--border)]">
+              {(
+                [
+                  { id: "normal", label: "Normal", icono: Rows3 },
+                  { id: "compacta", label: "Compacta", icono: ArrowDownWideNarrow },
+                ] as const
+              ).map((d) => {
+                const Icono = d.icono;
+                return (
+                  <button
+                    key={d.id}
+                    data-densidad={d.id}
+                    onClick={() => setPerfil({ densidad: d.id })}
+                    className={cx(
+                      "h-8 px-3.5 rounded-lg text-[13px] font-medium transition-all inline-flex items-center gap-2",
+                      perfil.densidad === d.id
+                        ? "bg-[var(--surface)] text-fg shadow-sm"
+                        : "text-muted hover:text-fg",
+                    )}
+                  >
+                    <Icono className="size-3.5" />
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          </Grupo>
+        </div>
+
+        {/* --------------------------- vista previa ------------------------- */}
+        <div>
+          <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-subtle mb-3">
+            Vista previa
+          </span>
+          {/* No es una maqueta aparte: la app entera ya está pintada con lo
+              que hay elegido (components/Proveedor.tsx lo aplica sobre
+              <html> en cuanto cambia el perfil). Esto es una muestra de las
+              piezas que no se ven desde Ajustes —un párrafo de temario, el
+              botón primario, los estados del mural— para no tener que
+              navegar a otra pantalla para comprobar. */}
+          <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+            <p className="text-[10.5px] uppercase tracking-[0.12em] text-subtle mb-2">
+              Tema 47 · epígrafe II
+            </p>
+            <p
+              data-vista-previa="tema"
+              className="prose-tema"
+              style={{ fontSize: `${cuerpo / 16}rem` }}
+            >
+              La hipoteca es un derecho real de garantía que sujeta directa e
+              inmediatamente los bienes sobre los que se impone al cumplimiento de la
+              obligación para cuya seguridad fue constituida.
+            </p>
+            <div className="hairline my-4" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Boton tam="sm" variante="primario">
+                Empezar el cante
+              </Boton>
+              <Boton tam="sm" variante="secundario">
+                Repasar
+              </Boton>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-3.5">
+              {ESTADOS.map((e) => (
+                <Badge key={e.id} color={e.color}>
+                  {e.label}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function Grupo({
+  titulo,
+  pista,
+  children,
+}: {
+  titulo: string;
+  pista: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <span className="block text-[12.5px] font-medium mb-1">{titulo}</span>
+      <p className="text-[11.5px] text-subtle leading-relaxed mb-2.5">{pista}</p>
+      {children}
+    </div>
   );
 }

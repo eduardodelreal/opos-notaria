@@ -882,6 +882,113 @@ end;
 $$;
 commit;
 
+-- ============================================================================
+-- 0006 · apariencia y hábitos de lista
+--
+-- Viven en `perfiles`, con su RLS contra la PK. Lo que hay que demostrar es
+-- que los DEFAULT dejan la app exactamente como estaba (si no, la migración le
+-- cambia la pantalla a todo el mundo), que los checks no dejan entrar basura y
+-- que el sepia —lo único que AMPLÍA un check que ya existía— se acepta.
+-- ============================================================================
+
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  f record;
+  n int;
+begin
+  select tema, acento, acento_personal, fuente_temas, tamano_tema, densidad,
+         orden_temas, vista_programa
+    into f
+    from public.perfiles where id = a;
+
+  -- Esto es LA prueba de la migración: un perfil que ya existía y al que nadie
+  -- ha tocado tiene que seguir dando exactamente la app de siempre.
+  perform pruebas.comprobar('apariencia', 'los valores por defecto son la app de siempre',
+    f.tema = 'dark' and f.acento = 'lacre' and f.acento_personal is null
+      and f.fuente_temas = 'serif' and f.tamano_tema = 17 and f.densidad = 'normal'
+      and f.orden_temas = 'numero' and f.vista_programa = 'mural',
+    'tema=' || f.tema || ' acento=' || f.acento || ' fuente=' || f.fuente_temas
+      || ' tamano=' || f.tamano_tema || ' densidad=' || f.densidad
+      || ' orden=' || f.orden_temas || ' vista=' || f.vista_programa);
+
+  update public.perfiles
+     set tema = 'sepia', acento = 'personal', acento_personal = '#2F6FB0',
+         fuente_temas = 'sans', tamano_tema = 20, densidad = 'compacta',
+         orden_temas = 'urgencia', vista_programa = 'lista'
+   where id = a;
+  select tema, acento_personal, tamano_tema, orden_temas
+    into f from public.perfiles where id = a;
+  perform pruebas.comprobar('apariencia', 'el opositor puede personalizar la app entera',
+    f.tema = 'sepia' and f.acento_personal = '#2F6FB0' and f.tamano_tema = 20
+      and f.orden_temas = 'urgencia',
+    'tema=' || f.tema || ' color=' || f.acento_personal || ' tamano=' || f.tamano_tema);
+
+  perform pruebas.comprobar('apariencia', 'no se acepta un tono base inventado',
+    pruebas.rechazado($x$update public.perfiles set tema = 'fucsia'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'no se acepta un acento fuera de la paleta',
+    pruebas.rechazado($x$update public.perfiles set acento = 'arcoiris'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'el acento libre tiene que ser un #rrggbb',
+    pruebas.rechazado($x$update public.perfiles set acento_personal = 'rojo'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'un cuerpo de texto ilegible no entra',
+    pruebas.rechazado($x$update public.perfiles set tamano_tema = 400$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'tampoco por abajo',
+    pruebas.rechazado($x$update public.perfiles set tamano_tema = 4$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'no se acepta una densidad inventada',
+    pruebas.rechazado($x$update public.perfiles set densidad = 'holgada'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'no se acepta una fuente inventada',
+    pruebas.rechazado($x$update public.perfiles set fuente_temas = 'comic'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'no se acepta un criterio de orden inventado',
+    pruebas.rechazado($x$update public.perfiles set orden_temas = 'al-azar'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('apariencia', 'no se acepta una vista de programa inventada',
+    pruebas.rechazado($x$update public.perfiles set vista_programa = 'carrusel'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+
+  -- El acento libre puede vaciarse: es null mientras el acento no sea el suyo.
+  update public.perfiles set acento = 'jade', acento_personal = null where id = a;
+  select acento_personal into f from public.perfiles where id = a;
+  perform pruebas.comprobar('apariencia', 'el acento libre se puede vaciar',
+    f.acento_personal is null, 'acento_personal = ' || coalesce(f.acento_personal, 'null'));
+
+  update public.perfiles set acento = 'cobre' where id = b;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('apariencia', 'rls: A no puede cambiarle la apariencia a B',
+    n = 0, 'perfiles ajenos tocados: ' || n);
+end;
+$$;
+commit;
+
+-- La apariencia viaja como cualquier otra columna: al tocarla, el reloj del
+-- last-write-wins tiene que avanzar. Si no avanzara, el otro dispositivo no se
+-- enteraría nunca de que el opositor cambió de tono.
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  antes timestamptz;
+  despues timestamptz;
+begin
+  select updated_at into antes from public.perfiles where id = a;
+  update public.perfiles set densidad = 'normal', tamano_tema = 19 where id = a;
+  select updated_at into despues from public.perfiles where id = a;
+  perform pruebas.comprobar('apariencia', 'cambiar la apariencia mueve updated_at (si no, no viaja)',
+    despues > antes, antes::text || ' -> ' || despues::text);
+end;
+$$;
+commit;
+
 -- Ninguna de las tablas nuevas puede tener política de DELETE.
 do $$
 declare n int;

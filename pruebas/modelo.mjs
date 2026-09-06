@@ -21,6 +21,7 @@
 import assert from "node:assert/strict";
 
 import { estadoVivo, useStore } from "../lib/store/store.ts";
+import { materiasOrdenadas } from "../lib/data/materias.ts";
 import { temasVivos, vivos, vivosMapa } from "../lib/data/vivos.ts";
 import { derivarProgresos } from "../lib/data/derivados.ts";
 import {
@@ -30,7 +31,23 @@ import {
   resumenGlobal,
   statsPorMateria,
 } from "../lib/data/srs.ts";
-import { migrarARelojes } from "../lib/store/migraciones.ts";
+import { migrarAApariencia, migrarARelojes } from "../lib/store/migraciones.ts";
+import { temasOrdenados, ordenDeTriaje } from "../lib/store/store.ts";
+import { PERFIL_INICIAL, normalizarPerfil, perfilDeFabrica } from "../lib/data/perfil.ts";
+import {
+  ACENTOS,
+  MINIMO_ETIQUETA,
+  MINIMO_SOLIDO,
+  MINIMO_TEXTO_FONDO,
+  MINIMO_TEXTO_SUPERFICIE,
+  TONOS,
+  apariencia,
+  paletaAcento,
+  paletaDe,
+  veredictoAcento,
+} from "../lib/data/apariencia.ts";
+import { contraste, hslARgb, rgbAHex } from "../lib/data/color.ts";
+import { readFileSync } from "node:fs";
 
 const DIA = 86_400_000;
 let fallos = 0;
@@ -761,6 +778,338 @@ console.log("\nmigración v2 → v3");
     const otra = migrarARelojes(structuredClone(v3));
     assert.deepEqual(otra.cantes[0].actualizado, v3.cantes[0].actualizado);
     assert.deepEqual(otra.temas[0].epigrafes.length, v3.temas[0].epigrafes.length);
+  });
+}
+
+
+/* ============================================================
+   6 · Apariencia
+
+   Dos cosas que, si se rompen, no dan error sino una app peor:
+
+     1. Que los valores por defecto dejen de reproducir la app de siempre.
+        Se comprueba contra el PROPIO app/globals.css, no contra una copia
+        de sus valores en la prueba: si alguien retoca el CSS y no la tabla
+        de lib/data/apariencia.ts (o al revés), esto se pone rojo.
+     2. Que alguna combinación elegible deje texto que no se lee. Se
+        comprueba por fuerza bruta sobre todo el círculo de tonos.
+   ============================================================ */
+
+console.log("\napariencia");
+{
+  const CSS = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+
+  /** Lee una variable de un bloque `:root…{}` del CSS de verdad. */
+  function varCss(selector, nombre) {
+    const bloque = CSS.slice(CSS.indexOf(selector + " {"));
+    const cuerpo = bloque.slice(0, bloque.indexOf("}"));
+    const m = cuerpo.match(new RegExp("\\" + nombre + ":\\s*([^;]+);"));
+    return m ? m[1].trim() : null;
+  }
+
+  prueba("la tabla de tonos es un espejo fiel de globals.css", () => {
+    for (const t of TONOS) {
+      const selector = t.clase ? `:root.${t.clase}` : ":root";
+      for (const [campo, variable] of [
+        ["bg", "--bg"],
+        ["surface", "--surface"],
+        ["lacre", "--lacre"],
+        ["lacreBright", "--lacre-bright"],
+      ]) {
+        assert.equal(
+          varCss(selector, variable),
+          t[campo],
+          `${selector} ${variable}: el CSS dice ${varCss(selector, variable)} y la tabla ${t[campo]}`,
+        );
+      }
+    }
+  });
+
+  prueba("el perfil por defecto pinta EXACTAMENTE la app de siempre", () => {
+    const a = apariencia(PERFIL_INICIAL);
+    assert.deepEqual(a.clases, [], "sin clases: el oscuro es el :root pelado");
+    assert.equal(a.vars["--lacre"], varCss(":root", "--lacre"));
+    assert.equal(a.vars["--lacre-bright"], varCss(":root", "--lacre-bright"));
+    assert.equal(a.vars["--lacre-soft"], varCss(":root", "--lacre-soft"));
+    assert.equal(a.vars["--lacre-fg"], varCss(":root", "--lacre-fg"));
+    assert.equal(a.vars["--tema-fuente"], varCss(":root", "--tema-fuente"));
+    assert.equal(a.vars["--tema-cuerpo"], varCss(":root", "--tema-cuerpo"));
+  });
+
+  prueba("el tema claro por defecto también sale calcado", () => {
+    const a = apariencia({ ...PERFIL_INICIAL, tema: "light" });
+    assert.deepEqual(a.clases, ["light"]);
+    assert.equal(a.vars["--lacre"], varCss(":root.light", "--lacre"));
+    assert.equal(a.vars["--lacre-bright"], varCss(":root.light", "--lacre-bright"));
+    assert.equal(a.vars["--lacre-soft"], varCss(":root.light", "--lacre-soft"));
+  });
+
+  prueba("la densidad compacta añade su clase y nada más", () => {
+    const normal = apariencia(PERFIL_INICIAL);
+    const compacta = apariencia({ ...PERFIL_INICIAL, densidad: "compacta" });
+    assert.deepEqual(compacta.clases, ["compacta"]);
+    assert.deepEqual(compacta.vars, normal.vars, "la densidad no toca colores");
+  });
+
+  prueba("el cuerpo del texto de los temas sale en rem exactos", () => {
+    assert.equal(apariencia(PERFIL_INICIAL).vars["--tema-cuerpo"], "1.0625rem");
+    assert.equal(
+      apariencia({ ...PERFIL_INICIAL, tamanoTema: 22 }).vars["--tema-cuerpo"],
+      "1.375rem",
+    );
+  });
+
+  prueba("la fuente sans solo cambia el texto de los temas", () => {
+    const a = apariencia({ ...PERFIL_INICIAL, fuenteTemas: "sans" });
+    assert.equal(a.vars["--tema-fuente"], "var(--font-ui)");
+  });
+
+  /** Comprueba los suelos de legibilidad de una semilla en los tres tonos. */
+  function exigirLegible(semilla, etiqueta) {
+    for (const t of TONOS) {
+      const p = paletaAcento(semilla, t.id);
+      const medidas = {
+        "sólido sobre el fondo": [contraste(p.lacre, t.bg), MINIMO_SOLIDO],
+        "sólido sobre la tarjeta": [contraste(p.lacre, t.surface), MINIMO_SOLIDO],
+        "texto sobre el fondo": [contraste(p.lacreBright, t.bg), MINIMO_TEXTO_FONDO],
+        "texto sobre la tarjeta": [
+          contraste(p.lacreBright, t.surface),
+          MINIMO_TEXTO_SUPERFICIE,
+        ],
+        "etiqueta sobre el sólido": [contraste(p.lacreFg, p.lacre), MINIMO_ETIQUETA],
+      };
+      for (const [que, [valor, minimo]] of Object.entries(medidas)) {
+        assert.ok(
+          valor + 1e-9 >= minimo,
+          `${etiqueta} (${semilla}) en ${t.id}: ${que} = ${valor.toFixed(2)} < ${minimo}`,
+        );
+      }
+    }
+  }
+
+  prueba("los cinco acentos con nombre se leen en los tres fondos", () => {
+    for (const a of ACENTOS) {
+      if (!a.semilla) continue;
+      exigirLegible(a.semilla, a.nombre);
+    }
+  });
+
+  prueba("NINGÚN color libre puede dejar el acento ilegible (fuerza bruta)", () => {
+    let probados = 0;
+    for (let h = 0; h < 360; h += 5) {
+      for (const sat of [0.05, 0.25, 0.5, 0.75, 1]) {
+        for (const luz of [0.02, 0.2, 0.35, 0.5, 0.65, 0.8, 0.98]) {
+          exigirLegible(rgbAHex(hslARgb([h, sat, luz])), "libre");
+          probados += 1;
+        }
+      }
+    }
+    assert.ok(probados >= 2500, `solo se han probado ${probados} colores`);
+  });
+
+  prueba("un acento que ya se lee NO se toca", () => {
+    // Un rojo lacre sobre el fondo oscuro cumple de sobra el mínimo de
+    // sólido: la corrección es una red de seguridad, no un filtro de marca.
+    const v = veredictoAcento("#c94152", "dark");
+    assert.equal(v.corregido, false);
+    assert.equal(v.aplicado, "#c94152");
+  });
+
+  prueba("un acento ilegible se corrige y se dice que se ha corregido", () => {
+    // Azul marino casi negro sobre el fondo casi negro: invisible.
+    const v = veredictoAcento("#0a0f2a", "dark");
+    assert.equal(v.corregido, true);
+    assert.ok(
+      v.contrasteFondo >= MINIMO_SOLIDO,
+      `sigue ilegible: ${v.contrasteFondo.toFixed(2)}`,
+    );
+  });
+
+  prueba("el acento personal sin color no revienta el generador", () => {
+    const p = paletaDe({ ...PERFIL_INICIAL, acento: "personal" });
+    assert.ok(/^#[0-9a-f]{6}$/.test(p.lacre), `lacre raro: ${p.lacre}`);
+  });
+
+  prueba("normalizarPerfil salva un perfil con basura dentro", () => {
+    const p = normalizarPerfil({
+      acento: "arcoiris",
+      tema: "fucsia",
+      tamanoTema: 400,
+      densidad: 7,
+      ordenTemas: "por-lo-que-sea",
+      vistaPrograma: null,
+      acentoPersonal: "no-soy-un-color",
+      nombre: "Marta",
+    });
+    assert.equal(p.acento, "lacre");
+    assert.equal(p.tema, "dark");
+    assert.equal(p.tamanoTema, 24, "se acota al máximo del esquema");
+    assert.equal(p.densidad, "normal");
+    assert.equal(p.ordenTemas, "numero");
+    assert.equal(p.vistaPrograma, "mural");
+    assert.equal(p.acentoPersonal, undefined);
+    assert.equal(p.nombre, "Marta", "lo que sí era válido se respeta");
+  });
+
+  prueba("normalizarPerfil acepta y normaliza un hex corto", () => {
+    const p = normalizarPerfil({ acento: "personal", acentoPersonal: "#F0A" });
+    assert.equal(p.acentoPersonal, "#ff00aa");
+  });
+
+  prueba("la migración v3 → v4 rellena la apariencia sin tocar lo demás", () => {
+    const viejo = {
+      perfil: { nombre: "Marta", diasOxido: 30, tema: "light" },
+      materias: [],
+      temas: [],
+      progresos: {},
+      sesiones: [],
+      cantes: [],
+      keypoints: [],
+      notas: [],
+      simulacros: [],
+      vueltas: [],
+      chat: [],
+      crono: null,
+    };
+    const p = migrarAApariencia(viejo).perfil;
+    assert.equal(p.nombre, "Marta");
+    assert.equal(p.diasOxido, 30);
+    assert.equal(p.tema, "light");
+    assert.equal(p.acento, "lacre");
+    assert.equal(p.tamanoTema, 17);
+    assert.equal(p.ordenTemas, "numero");
+    // Y el resultado es la app de siempre, que es de lo que se trata.
+    assert.deepEqual(apariencia(p).vars, apariencia({ ...PERFIL_INICIAL, tema: "light" }).vars);
+  });
+
+  prueba("un perfil que solo cambia la apariencia YA NO es de fábrica", () => {
+    assert.equal(perfilDeFabrica(PERFIL_INICIAL), true);
+    assert.equal(perfilDeFabrica({ ...PERFIL_INICIAL, tema: "sepia" }), true,
+      "el tono sí sigue sin contar: es lo primero que toca todo el mundo");
+    assert.equal(perfilDeFabrica({ ...PERFIL_INICIAL, acento: "jade" }), false);
+    assert.equal(perfilDeFabrica({ ...PERFIL_INICIAL, densidad: "compacta" }), false);
+    assert.equal(perfilDeFabrica({ ...PERFIL_INICIAL, ordenTemas: "nota" }), false);
+  });
+}
+
+/* ============================================================
+   7 · Orden de los temas configurable
+   ============================================================ */
+
+console.log("\norden de los temas");
+{
+  const st = () => useStore.getState();
+  st().borrarTodo();
+  const civil = st().addMateria("Civil", "CIV", "#c94152");
+  const hipo = st().addMateria("Hipotecario", "HIP", "#3f93c4");
+
+  // Se dan de alta en orden inverso al del programa para que ordenar "por
+  // número" no salga bien por accidente.
+  const h9 = st().addTema(hipo.id, 9, "Hipoteca");
+  const c3 = st().addTema(civil.id, 3, "Nacionalidad");
+  const c2 = st().addTema(civil.id, 2, "Ausencia");
+  const c1 = st().addTema(civil.id, 1, "Persona física");
+
+  // El expediente está montado para que los CINCO criterios den órdenes
+  // DISTINTOS. Si no, una prueba en verde no demostraría que cada criterio
+  // hace lo suyo: valdría con que todos ordenaran igual.
+  //
+  //   estado    C3 oxidado  < C2 estudiando < C1 cantable
+  //   urgencia  C2 (400 d)  > C3 (60 d)     > C1 (1 d)
+  //   tiempo    C1 100 s    < C3 500 s      < C2 9000 s
+  //   nota      C3 (2)      < C1 (5)        < C2 (8)
+  const ahora = Date.now();
+  useStore.setState((s) => ({
+    progresos: {
+      ...s.progresos,
+      [c1.id]: { ...s.progresos[c1.id], estado: "cantable", segundos: 100,
+        notaMedia: 5, ultimoEstudio: ahora - DIA },
+      [c2.id]: { ...s.progresos[c2.id], estado: "estudiando", segundos: 9000,
+        notaMedia: 8, ultimoEstudio: ahora - 400 * DIA },
+      // Dominado pero sin tocar hace 60 días: en pantalla sale OXIDADO, y es
+      // el estado efectivo el que tiene que mandar al ordenar.
+      [c3.id]: { ...s.progresos[c3.id], estado: "dominado", segundos: 500,
+        notaMedia: 2, ultimoEstudio: ahora - 60 * DIA },
+    },
+  }));
+
+  const temas = () => estadoVivo().temas;
+  const materias = () => materiasOrdenadas(estadoVivo().materias);
+  const progresos = () => estadoVivo().progresos;
+  const etiqueta = (t) => `${t.materiaId === civil.id ? "C" : "H"}${t.numero}`;
+  const orden = (criterio) =>
+    temasOrdenados(temas(), materias(), criterio, progresos(), 45).map(etiqueta);
+
+  prueba("por defecto ordena como siempre: materia y número", () => {
+    assert.deepEqual(orden(), ["C1", "C2", "C3", "H9"]);
+    assert.deepEqual(orden("numero"), ["C1", "C2", "C3", "H9"]);
+  });
+
+  prueba("por estado manda el estado EFECTIVO, no el guardado", () => {
+    assert.deepEqual(orden("estado"), ["C3", "C2", "C1", "H9"]);
+  });
+
+  prueba("por urgencia, primero lo que hace más que no tocas", () => {
+    assert.deepEqual(orden("urgencia"), ["C2", "C3", "C1", "H9"]);
+  });
+
+  prueba("por tiempo, primero los temas con menos horas", () => {
+    assert.deepEqual(orden("tiempo"), ["C1", "C3", "C2", "H9"]);
+  });
+
+  prueba("por nota, primero los peor cantados", () => {
+    assert.deepEqual(orden("nota"), ["C3", "C1", "C2", "H9"]);
+  });
+
+  prueba("los temas sin cantar van al final, no mezclados con los suspensos", () => {
+    const sinCantar = st().addTema(civil.id, 4, "Sin cantar nunca");
+    assert.deepEqual(orden("nota"), ["C3", "C1", "C2", "C4", "H9"]);
+    st().removeTema(sinCantar.id);
+  });
+
+  prueba("los cinco criterios dan cinco órdenes distintos", () => {
+    const vistos = new Set(
+      ["numero", "estado", "urgencia", "tiempo", "nota"].map((c) => orden(c).join()),
+    );
+    assert.equal(vistos.size, 5, `solo ${vistos.size} órdenes distintos: ${[...vistos]}`);
+  });
+
+  prueba("el orden de materias manda por encima del criterio", () => {
+    // Hipotecario delante: su tema pasa a ir primero pase lo que pase.
+    st().moverMateria(hipo.id, -1);
+    assert.deepEqual(orden("nota"), ["H9", "C3", "C1", "C2"]);
+    assert.deepEqual(orden(), ["H9", "C1", "C2", "C3"]);
+    st().moverMateria(hipo.id, 1);
+    assert.deepEqual(orden("nota"), ["C3", "C1", "C2", "H9"]);
+  });
+
+  prueba("moverMateria no se sale de la lista", () => {
+    const antes = materias().map((m) => m.id);
+    st().moverMateria(antes[0], -1);
+    st().moverMateria(antes[antes.length - 1], 1);
+    assert.deepEqual(materias().map((m) => m.id), antes);
+  });
+
+  prueba("moverMateria mueve el reloj de las DOS materias que intercambia", () => {
+    const antes = new Map(materias().map((m) => [m.id, m.actualizado]));
+    const ids = materias().map((m) => m.id);
+    st().moverMateria(ids[1], -1);
+    const movidas = materias().filter((m) => m.actualizado > antes.get(m.id));
+    assert.equal(movidas.length, 2, `relojes movidos: ${movidas.length}`);
+    st().moverMateria(ids[1], 1);
+  });
+
+  prueba("en las colas de triaje el orden por defecto sigue siendo la urgencia", () => {
+    assert.equal(ordenDeTriaje("numero"), "urgencia");
+    assert.equal(ordenDeTriaje("nota"), "nota");
+    assert.equal(ordenDeTriaje("urgencia"), "urgencia");
+  });
+
+  prueba("temasOrdenados no muta el array que recibe", () => {
+    const entrada = temas();
+    const copia = [...entrada];
+    temasOrdenados(entrada, materias(), "nota", progresos(), 45);
+    assert.deepEqual(entrada, copia);
   });
 }
 

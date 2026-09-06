@@ -27,6 +27,11 @@
   --lacre: #a82f3c;
   --lacre-bright: #c94152;
   --lacre-soft: rgba(168, 47, 60, 0.14);
+  /* Etiqueta encima del lacre sólido (el texto del botón primario). Era un
+     `text-white` a pelo en components/ui.tsx; ahora es un token porque el
+     acento lo elige el opositor y sobre un acento claro el blanco no se lee.
+     Lo calcula lib/data/apariencia.ts midiendo el contraste de verdad. */
+  --lacre-fg: #ffffff;
   --laton: #c9a227;
   --laton-soft: rgba(201, 162, 39, 0.13);
 
@@ -51,6 +56,13 @@
     Roboto, sans-serif;
   --font-serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
 
+  /* Tipografía del TEXTO DE LOS TEMAS, que es lo que se lee durante horas.
+     Van aparte de --font-serif porque la interfaz no cambia con ellas: los
+     titulares y la marca siguen siendo serif elijas lo que elijas. Los
+     valores de aquí son los que había escritos a pelo en `prose-tema`. */
+  --tema-fuente: var(--font-serif);
+  --tema-cuerpo: 1.0625rem;
+
   color-scheme: dark;
 }
 
@@ -70,6 +82,7 @@
   --lacre: #9c2733;
   --lacre-bright: #b8323f;
   --lacre-soft: rgba(156, 39, 51, 0.1);
+  --lacre-fg: #ffffff;
   --laton: #9a7b12;
   --laton-soft: rgba(154, 123, 18, 0.12);
 
@@ -84,6 +97,60 @@
   --shadow-md: 0 10px 26px -16px rgba(60, 50, 30, 0.3);
 
   color-scheme: light;
+}
+
+/* Papel cálido. No es "el claro con un filtro sepia": es el tercer tono que
+   pide medio mundo para leer temas durante horas, y el blanco puro del claro
+   no lo da. Los contrastes están al mismo nivel que los del tema claro (ver
+   pruebas/modelo.mjs, que los mide contra este mismo fichero). */
+:root.sepia {
+  --bg: #f2ebdc;
+  --bg-elevated: #fbf6ea;
+  --surface: #fdf9f0;
+  --surface-2: #ece3d0;
+  --surface-3: #e0d5bd;
+  --border: #d8cbb1;
+  --border-strong: #bfae8e;
+
+  --fg: #241d14;
+  --fg-muted: #5c503d;
+  --fg-subtle: #8a7c64;
+
+  --lacre: #98242f;
+  --lacre-bright: #b02f3c;
+  --lacre-soft: rgba(152, 36, 47, 0.1);
+  --lacre-fg: #ffffff;
+  --laton: #947610;
+  --laton-soft: rgba(148, 118, 16, 0.13);
+
+  --st-nuevo: #c3b498;
+  --st-estudiando: #b07d1a;
+  --st-cantable: #2b7099;
+  --st-dominado: #317a45;
+  --st-oxidado: #a8412d;
+
+  --ok: #317a45;
+  --warn: #b07d1a;
+  --danger: #b2452f;
+  --info: #2b7099;
+
+  --ring: rgba(148, 118, 16, 0.5);
+  --shadow-lg: 0 24px 50px -24px rgba(78, 60, 28, 0.3);
+  --shadow-md: 0 10px 26px -16px rgba(78, 60, 28, 0.28);
+
+  color-scheme: light;
+}
+
+/* Densidad compacta.
+   Reescribe `--spacing`, el token del que Tailwind deriva TODAS sus
+   utilidades de espaciado y de tamaño (`p-5` es `calc(var(--spacing) * 5)`).
+   Una sola línea encoge la retícula entera y de forma proporcional, en vez
+   de repartir excepciones por treinta componentes que acabarían divergiendo.
+   El texto no se toca: los cuerpos van en píxeles/rem, no en `--spacing`.
+   Va sin capa (`@layer`) a propósito: el CSS sin capa gana a la capa `theme`
+   donde Tailwind define el valor por defecto. */
+:root.compacta {
+  --spacing: 0.215rem;
 }
 
 @theme inline {
@@ -211,9 +278,23 @@ body::before {
   letter-spacing: -0.01em;
 }
 
-@utility prose-tema {
-  font-family: var(--font-serif);
-  font-size: 1.0625rem;
+/* El texto de los temas. Es lo único que cambia de tipografía y de cuerpo
+   cuando el opositor lo pide: la interfaz se queda como está, porque
+   redimensionar la interfaz entera es lo que convierte una preferencia de
+   lectura en un desastre de maquetación.
+
+   Va como regla NORMAL y ya no como `@utility`, y es un arreglo, no un
+   capricho: donde se usa —el área de texto del epígrafe— convive con el
+   `text-sm` que trae el estilo base de los campos (components/ui.tsx), y
+   dos utilidades de Tailwind con la misma especificidad las desempata el
+   orden de la hoja, que ponía `text-sm` por detrás. Resultado: el temario
+   se pintaba a 14px y no al cuerpo que este mismo bloque declara desde el
+   primer día. Fuera de `@layer`, esta regla gana a cualquier utilidad, que
+   es lo que hace que el cuerpo elegido en Ajustes llegue de verdad al
+   texto que el opositor se estudia. */
+.prose-tema {
+  font-family: var(--tema-fuente, var(--font-serif));
+  font-size: var(--tema-cuerpo, 1.0625rem);
   line-height: 1.75;
   color: var(--fg);
 }

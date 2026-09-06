@@ -7,14 +7,29 @@ export function cx(...partes: (string | false | null | undefined)[]): string {
   return partes.filter(Boolean).join(" ");
 }
 
+/**
+ * Tinta de las etiquetas que van ENCIMA del lacre sólido (los sellos de la
+ * marca, con su 95 % de opacidad de siempre).
+ *
+ * Es `--lacre-fg` y no `white` porque el acento lo elige el opositor: sobre
+ * un acento claro el blanco desaparece. El token lo calcula
+ * lib/data/apariencia.ts midiendo el contraste real contra el color elegido.
+ */
+export const TINTA_SOBRE_LACRE =
+  "color-mix(in srgb, var(--lacre-fg) 95%, transparent)";
+
 /* ---------------------------------- Botón --------------------------------- */
 
 type Variante = "primario" | "secundario" | "fantasma" | "peligro" | "oro";
 type Tam = "sm" | "md" | "lg";
 
 const VARIANTES: Record<Variante, string> = {
+  // `text-[var(--lacre-fg)]` y no `text-white`: el acento lo elige el
+  // opositor y sobre un acento claro el blanco no se lee. El token vale
+  // #ffffff en los tres tonos de la casa, así que el botón de siempre no
+  // cambia ni un píxel.
   primario:
-    "bg-[var(--lacre)] text-white hover:bg-[var(--lacre-bright)] border-transparent shadow-[0_6px_20px_-8px_var(--lacre)]",
+    "bg-[var(--lacre)] text-[var(--lacre-fg)] hover:bg-[var(--lacre-bright)] border-transparent shadow-[0_6px_20px_-8px_var(--lacre)]",
   secundario:
     "bg-[var(--surface-2)] text-fg hover:bg-[var(--surface-3)] border-[var(--border)]",
   fantasma:

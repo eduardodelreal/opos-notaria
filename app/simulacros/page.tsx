@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  temasOrdenados,
   useCantes,
   useMaterias,
   useProgresos,
@@ -113,6 +114,10 @@ function Bombo() {
     });
   }, [temas, materiasSel, excluirRecientes, progresos]);
 
+  // Las bolas NO se reordenan con la preferencia del opositor, y no es un
+  // olvido: el sorteo es el sorteo (igual que en el examen, no eliges tú) y
+  // además `Simulacro.notas` es POSICIONAL —notas[i] es la nota de
+  // temaIds[i]—, así que reordenar la lista pintada desplazaría las notas.
   const sortear = () => {
     if (elegibles.length === 0) return;
     setSorteando(true);
@@ -407,7 +412,20 @@ function Dictamen() {
   const ia = useIA();
   const perfil = useStore((s) => s.perfil);
   const temas = useTemas();
+  const materias = useMaterias();
+  const progresos = useProgresos();
   const addSimulacro = useStore((s) => s.addSimulacro);
+
+  /**
+   * Al modelo solo le caben unos cuantos temas de contexto, así que el
+   * criterio del opositor decide CUÁLES ve: quien ordena por urgencia
+   * consigue supuestos sobre lo que lleva semanas sin tocar, y quien lo deja
+   * por número recibe el principio del programa, que es lo que había antes.
+   */
+  const paraElModelo = React.useMemo(
+    () => temasOrdenados(temas, materias, perfil.ordenTemas, progresos, perfil.diasOxido),
+    [temas, materias, perfil.ordenTemas, progresos, perfil.diasOxido],
+  );
 
   const [supuesto, setSupuesto] = React.useState("");
   const [respuesta, setRespuesta] = React.useState("");
@@ -437,7 +455,7 @@ function Dictamen() {
         supuesto,
         respuesta,
         estilo: perfil.estiloFeedback,
-        temas: temas
+        temas: paraElModelo
           .slice(0, 40)
           .map((t) => `T${t.numero} ${t.titulo}`)
           .join("; "),

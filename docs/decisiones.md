@@ -80,6 +80,76 @@ Pero el cante manda sobre la grabación, no al revés. De ahí las reglas duras:
   laguna. Decirle a alguien que se dejó un artículo que sí dijo es peor que
   no decirle nada.
 
+### 8. La app se personaliza, pero sigue siendo la misma app
+
+El opositor pasa años delante de esta pantalla. Poder ajustarla —fondo,
+acento, tipografía y cuerpo del texto de los temas, densidad, con qué
+criterio se ordenan los temas— no es un capricho: es la diferencia entre una
+herramienta que se usa y una que se abandona.
+
+Ahora bien, personalizar **no es un constructor de temas**. Las reglas:
+
+- **El acento sustituye al lacre, nunca al latón.** El dorado es la segunda
+  nota de la casa y es lo que hace que un opositor con el acento jade siga
+  usando reconociblemente esta app y no otra. Se ofrece una paleta con
+  nombre (lacre, tinta, jade, cárdeno, cobre) porque un selector de color a
+  pelo como única opción es una trampa: la mayoría de los colores elegidos a
+  ojo sobre un fondo casi negro no se leen. El color libre existe, pero
+  pasa por la corrección de contraste.
+- **La legibilidad no se negocia.** `lib/data/color.ts` mide el contraste
+  WCAG de verdad y `lib/data/apariencia.ts` corrige la luminosidad del
+  acento hasta que llega al mínimo (3:1 como relleno, 4.5:1 donde se usa
+  como texto, 4.5:1 para la etiqueta encima del botón). Si el color elegido
+  ya cumple, sale tal cual: la corrección es una red, no un filtro de marca.
+  `pruebas/modelo.mjs` lo comprueba por fuerza bruta sobre todo el círculo
+  de tonos, en los tres fondos.
+- **Solo cambia de tipografía el texto de los temas.** Los titulares, la
+  marca y la interfaz se quedan como están. Cambiar el cuerpo de la interfaz
+  entera es lo que convierte una preferencia de lectura en un desastre de
+  maquetación.
+- **La densidad es una línea de CSS.** `:root.compacta` reescribe
+  `--spacing`, el token del que Tailwind deriva todas sus utilidades de
+  espaciado. Una sola variable encoge la retícula entera y de forma
+  proporcional; la alternativa —excepciones repartidas por treinta
+  componentes— habría divergido a la tercera pantalla.
+- **Los valores por defecto son la app de siempre, hasta el último dígito.**
+  Quien no toca nada no nota nada. `pruebas/modelo.mjs` lo comprueba contra
+  el propio `app/globals.css`: si alguien cambia un color en el CSS y no en
+  la tabla de `apariencia.ts` (o al revés), la prueba se pone roja.
+
+### 9. La personalización viaja; el antiparpadeo no calcula
+
+Vive en `Perfil` y en la tabla `perfiles` (migración `0006`), como
+`dias_oxido` o `estilo_feedback`: se configura una tarde en el portátil de
+casa y el de la biblioteca abre igual. No es "el tema de este navegador".
+
+El guion antiparpadeo de `app/layout.tsx` tenía que crecer con esto, y la
+tentación era duplicar el cálculo de color en una cadena del `head`. No se
+hace: `components/Proveedor.tsx` deja en `localStorage` el resultado ya
+masticado (clases + pares clave/valor) y el guion **solo lo copia**. Así el
+color se calcula en un único sitio y no hay una segunda versión resumida
+esperando a desincronizarse.
+
+### 10. El orden de los temas es del opositor, salvo en las colas de triaje
+
+`temasOrdenados()` acepta cinco criterios (número, estado, urgencia, tiempo
+invertido, nota) y lo respetan el programa, el cante, el crono y el repaso.
+Reordena **dentro de cada materia**: el mural se lee por materias y romper
+esa agrupación por ordenar por nota deja una lista sin mapa.
+
+Dos excepciones, las dos deliberadas:
+
+- **El cante y el repaso son triaje**, no catálogo: la pregunta no es "dónde
+  está el tema 47" sino "qué toca ahora". Ahí el criterio por defecto
+  ("número") se sustituye por la urgencia, que es como esas dos pantallas se
+  han ordenado desde siempre; cualquier otro criterio, que solo se puede
+  haber elegido a conciencia, sí manda. En el repaso, además, la preferencia
+  ordena la cola pero no decide **quién entra**: eso lo sigue diciendo la
+  urgencia, o un tema que no toca se colaría por tener mala nota.
+- **Las bolas del bombo no se reordenan.** El sorteo es el sorteo, y además
+  `Simulacro.notas` es posicional: reordenar la lista pintada desplazaría
+  las notas.
+
 ---
 
 ## Técnicas

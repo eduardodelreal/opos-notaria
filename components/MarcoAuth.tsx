@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { Card } from "./ui";
+import { Card, TINTA_SOBRE_LACRE } from "./ui";
 
 /**
  * El marco de las páginas de acceso: pantalla completa, degradados de marca,
@@ -78,7 +78,10 @@ function SelloGrande() {
           boxShadow: "0 14px 34px -14px var(--lacre)",
         }}
       />
-      <span className="relative font-serif text-[23px] font-semibold text-white/95">
+      <span
+        className="relative font-serif text-[23px] font-semibold"
+        style={{ color: TINTA_SOBRE_LACRE }}
+      >
         N
       </span>
     </span>

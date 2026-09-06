@@ -1,7 +1,7 @@
 import "server-only";
 
 /* ============================================================
-   Transcribir el cante: por qué esto no lo hace Claude
+   Transcribir el cante: por qué esto no lo hace el adaptador de texto
 
    Se comprobó antes de escribir una línea (docs/ia.md, "Audio"): la
    Messages API de Anthropic **no acepta audio**. Sus bloques de contenido

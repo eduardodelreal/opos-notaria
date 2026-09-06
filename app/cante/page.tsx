@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mic, Search, Shuffle } from "lucide-react";
 import {
+  ordenDeTriaje,
   temasOrdenados,
   useCantes,
   useMaterias,
@@ -34,22 +35,27 @@ export default function ElegirCante() {
   const [busqueda, setBusqueda] = React.useState("");
   const [materiaId, setMateriaId] = React.useState("todas");
 
-  const ordenados = React.useMemo(
-    () => temasOrdenados(temas, materias),
-    [temas, materias],
-  );
+  // Elegir qué cantar es una pantalla de triaje: por eso el criterio pasa
+  // por `ordenDeTriaje` y el valor por defecto conserva la urgencia con la
+  // que esta lista se ha ordenado desde siempre.
+  const criterio = ordenDeTriaje(perfil.ordenTemas);
 
   const lista = React.useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    return ordenados
+    const filtrados = temas
       .filter((t) => materiaId === "todas" || t.materiaId === materiaId)
-      .filter((t) => !q || `${t.numero} ${t.titulo}`.toLowerCase().includes(q))
-      .sort((a, b) => {
+      .filter((t) => !q || `${t.numero} ${t.titulo}`.toLowerCase().includes(q));
+    // La urgencia pura no agrupa por materia: es la cola de "qué toca ya",
+    // y meterle bloques de materia por delante la volvería inútil.
+    if (criterio === "urgencia") {
+      return [...filtrados].sort((a, b) => {
         const pa = progresos[a.id];
         const pb = progresos[b.id];
         return (pb ? urgencia(pb) : 0) - (pa ? urgencia(pa) : 0);
       });
-  }, [ordenados, materiaId, busqueda, progresos]);
+    }
+    return temasOrdenados(filtrados, materias, criterio, progresos, perfil.diasOxido);
+  }, [temas, materias, materiaId, busqueda, progresos, criterio, perfil.diasOxido]);
 
   const alAzar = () => {
     const candidatos = lista.filter((t) => {

@@ -18,6 +18,8 @@ import type {
   TranscripcionCante,
   Vuelta,
 } from "../data/types";
+import { normalizarPerfil } from "../data/perfil";
+import { acotarTamanoTema } from "../data/apariencia";
 
 /* ============================================================
    El único sitio donde el dominio se convierte en columnas
@@ -117,6 +119,15 @@ export interface FilaPerfil extends Sincronizable {
   dias_oxido: number;
   tema: Perfil["tema"];
   estilo_feedback: Perfil["estiloFeedback"];
+  /* --- apariencia y hábitos (0006) --- */
+  acento: Perfil["acento"];
+  /** `#rrggbb` del acento libre. `null` mientras el acento no sea el suyo. */
+  acento_personal: string | null;
+  fuente_temas: Perfil["fuenteTemas"];
+  tamano_tema: number;
+  densidad: Perfil["densidad"];
+  orden_temas: Perfil["ordenTemas"];
+  vista_programa: Perfil["vistaPrograma"];
 }
 
 export interface FilaMateria extends Sincronizable {
@@ -318,13 +329,32 @@ export function aFilaPerfil(
     dias_oxido: perfil.diasOxido,
     tema: perfil.tema,
     estilo_feedback: perfil.estiloFeedback,
+    acento: perfil.acento,
+    acento_personal: texto(perfil.acentoPersonal),
+    fuente_temas: perfil.fuenteTemas,
+    // El check de la columna es `between 15 and 24`: un cuerpo fuera de
+    // rango reventaría el push entero, y una preferencia visual no vale una
+    // sincronización. Se acota con la misma función que usa la interfaz.
+    tamano_tema: acotarTamanoTema(perfil.tamanoTema),
+    densidad: perfil.densidad,
+    orden_temas: perfil.ordenTemas,
+    vista_programa: perfil.vistaPrograma,
     updated_at: iso(actualizado),
     deleted_at: borrado == null ? null : iso(borrado),
   };
 }
 
+/**
+ * La fila del servidor, de vuelta al dominio.
+ *
+ * Pasa por `normalizarPerfil` y no se construye a pelo porque una fila
+ * escrita por una versión anterior a 0006 trae las columnas de apariencia a
+ * null (o directamente no las trae, si el `select` viene de un cliente
+ * viejo). Un `acento: null` llegaría al generador de paletas; con el
+ * saneado se convierte en el acento de la casa, que es la app de siempre.
+ */
 export function deFilaPerfil(fila: FilaPerfil): Perfil {
-  return {
+  return normalizarPerfil({
     nombre: fila.nombre ?? "",
     oposicion: fila.oposicion,
     fechaInicio: ms(fila.fecha_inicio) ?? Date.now(),
@@ -335,7 +365,14 @@ export function deFilaPerfil(fila: FilaPerfil): Perfil {
     diasOxido: fila.dias_oxido,
     tema: fila.tema,
     estiloFeedback: fila.estilo_feedback,
-  };
+    acento: fila.acento,
+    acentoPersonal: fila.acento_personal ?? undefined,
+    fuenteTemas: fila.fuente_temas,
+    tamanoTema: fila.tamano_tema,
+    densidad: fila.densidad,
+    ordenTemas: fila.orden_temas,
+    vistaPrograma: fila.vista_programa,
+  });
 }
 
 /* ------------------------------------------------------------- materias -- */

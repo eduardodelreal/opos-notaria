@@ -3,6 +3,8 @@
 import * as React from "react";
 import Link from "next/link";
 import {
+  ChevronDown,
+  ChevronUp,
   ClipboardPaste,
   LayoutGrid,
   List,
@@ -51,6 +53,8 @@ export default function Programa() {
   const updateMateria = useStore((s) => s.updateMateria);
   const removeMateria = useStore((s) => s.removeMateria);
   const removeTema = useStore((s) => s.removeTema);
+  const moverMateria = useStore((s) => s.moverMateria);
+  const setPerfil = useStore((s) => s.setPerfil);
   const progresos = useProgresos();
   // El orden de la barra de materias sale de `Materia.orden`, no del array.
   const materias = React.useMemo(
@@ -58,7 +62,12 @@ export default function Programa() {
     [materiasSinOrdenar],
   );
 
-  const [vista, setVista] = React.useState<Vista>("mural");
+  // La vista no es estado local: es una preferencia del perfil, así que
+  // el opositor que trabaja en lista no tiene que volver a elegirla cada vez
+  // que entra ni en cada aparato. El botón de arriba SIGUE siendo el mismo
+  // control; lo que cambia es dónde se guarda lo que dice.
+  const vista = perfil.vistaPrograma;
+  const setVista = (v: Vista) => setPerfil({ vistaPrograma: v });
   const [busqueda, setBusqueda] = React.useState("");
   const [filtroMateria, setFiltroMateria] = React.useState("todas");
   const [filtroEstado, setFiltroEstado] = React.useState<"todos" | EstadoTema>("todos");
@@ -66,9 +75,11 @@ export default function Programa() {
   const [modalMaterias, setModalMaterias] = React.useState(false);
   const { pedir, dialogo } = useConfirmacion();
 
+  // El criterio lo pone el opositor en Ajustes. Por defecto es "numero",
+  // que es el orden de siempre: materia y número, como el programa impreso.
   const ordenados = React.useMemo(
-    () => temasOrdenados(temas, materias),
-    [temas, materias],
+    () => temasOrdenados(temas, materias, perfil.ordenTemas, progresos, perfil.diasOxido),
+    [temas, materias, perfil.ordenTemas, progresos, perfil.diasOxido],
   );
 
   const filtrados = React.useMemo(() => {
@@ -372,6 +383,7 @@ export default function Programa() {
         temas={temas}
         onAdd={addMateria}
         onUpdate={updateMateria}
+        onMover={moverMateria}
         onRemove={(id, nombre, n) =>
           pedir(
             "Borrar materia",
@@ -597,6 +609,7 @@ function ModalMaterias({
   temas,
   onAdd,
   onUpdate,
+  onMover,
   onRemove,
 }: {
   abierto: boolean;
@@ -605,6 +618,7 @@ function ModalMaterias({
   temas: { materiaId: string }[];
   onAdd: (nombre: string, abrev: string, color: string) => unknown;
   onUpdate: (id: string, parcial: { nombre?: string; color?: string }) => void;
+  onMover: (id: string, direccion: -1 | 1) => void;
   onRemove: (id: string, nombre: string, n: number) => void;
 }) {
   const [nombre, setNombre] = React.useState("");
@@ -617,15 +631,39 @@ function ModalMaterias({
       abierto={abierto}
       onCerrar={onCerrar}
       titulo="Materias"
-      descripcion="Vienen las cinco clásicas de Notarías, pero puedes renombrarlas, cambiarles el color, borrarlas o añadir las tuyas."
+      descripcion="Vienen las cinco clásicas de Notarías, pero puedes renombrarlas, cambiarles el color, reordenarlas, borrarlas o añadir las tuyas. El orden manda en el mural, en la barra lateral y en todas las listas de temas."
       ancho="max-w-xl"
     >
       <div className="space-y-2 mb-6">
-        {materias.map((m) => (
+        {materias.map((m, i) => (
           <div
             key={m.id}
             className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] border border-[var(--border)] bg-[var(--surface-2)]"
           >
+            {/* Subir/bajar y no arrastrar: el arrastre necesita puntero fino
+                y aquí basta con mover una materia de sitio de uvas a peras.
+                Cada pulsación intercambia el `orden` con la vecina, que es
+                una escritura de dos filas y viaja como cualquier otra. */}
+            <div className="flex flex-col shrink-0 -my-1">
+              <button
+                onClick={() => onMover(m.id, -1)}
+                disabled={i === 0}
+                aria-label={`Subir ${m.nombre}`}
+                title="Subir"
+                className="text-subtle hover:text-fg disabled:opacity-25 disabled:pointer-events-none transition-colors leading-none"
+              >
+                <ChevronUp className="size-3.5" />
+              </button>
+              <button
+                onClick={() => onMover(m.id, 1)}
+                disabled={i === materias.length - 1}
+                aria-label={`Bajar ${m.nombre}`}
+                title="Bajar"
+                className="text-subtle hover:text-fg disabled:opacity-25 disabled:pointer-events-none transition-colors leading-none"
+              >
+                <ChevronDown className="size-3.5" />
+              </button>
+            </div>
             <input
               type="color"
               value={m.color}
