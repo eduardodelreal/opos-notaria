@@ -8,6 +8,7 @@ import {
   textoDe,
 } from "@/lib/ai/client";
 import { sistemaKeyPoints } from "@/lib/ai/prompts";
+import { conCors, responderPreflight } from "@/lib/ai/cors";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -36,7 +37,7 @@ const ESQUEMA = {
 };
 
 /** Extrae puntos clave memorizables del texto que pega el opositor. */
-export async function POST(req: Request) {
+async function manejar(req: Request) {
   if (!hayClave()) return sinClave();
 
   try {
@@ -98,4 +99,13 @@ export async function POST(req: Request) {
   } catch (e) {
     return errorApi(e);
   }
+}
+
+/** El navegador manda OPTIONS antes de un POST cross-origin. */
+export function OPTIONS(req: Request) {
+  return responderPreflight(req);
+}
+
+export async function POST(req: Request) {
+  return conCors(await manejar(req), req);
 }

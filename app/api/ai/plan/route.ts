@@ -8,13 +8,14 @@ import {
   textoDe,
 } from "@/lib/ai/client";
 import { sistemaPlan } from "@/lib/ai/prompts";
+import { conCors, responderPreflight } from "@/lib/ai/cors";
 import type { Perfil } from "@/lib/data/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
 
 /** Genera el plan semanal a partir de la ficha real del opositor. */
-export async function POST(req: Request) {
+async function manejar(req: Request) {
   if (!hayClave()) return sinClave();
 
   try {
@@ -55,4 +56,13 @@ export async function POST(req: Request) {
   } catch (e) {
     return errorApi(e);
   }
+}
+
+/** El navegador manda OPTIONS antes de un POST cross-origin. */
+export function OPTIONS(req: Request) {
+  return responderPreflight(req);
+}
+
+export async function POST(req: Request) {
+  return conCors(await manejar(req), req);
 }

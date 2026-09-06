@@ -7,6 +7,7 @@ import {
   sinClave,
 } from "@/lib/ai/client";
 import { sistemaChat } from "@/lib/ai/prompts";
+import { conCors, responderPreflight } from "@/lib/ai/cors";
 import { FIN_RESPUESTA } from "@/lib/ai/protocolo";
 import type { Perfil } from "@/lib/data/types";
 
@@ -23,7 +24,7 @@ export const maxDuration = 300;
  * system prompt: así el prefijo cacheado (system + historial) se mantiene
  * intacto entre turnos y solo se pagan tokens completos por la ficha.
  */
-export async function POST(req: Request) {
+async function manejar(req: Request) {
   if (!hayClave()) return sinClave();
 
   try {
@@ -115,4 +116,13 @@ export async function POST(req: Request) {
   } catch (e) {
     return errorApi(e);
   }
+}
+
+/** El navegador manda OPTIONS antes de un POST cross-origin. */
+export function OPTIONS(req: Request) {
+  return responderPreflight(req);
+}
+
+export async function POST(req: Request) {
+  return conCors(await manejar(req), req);
 }
