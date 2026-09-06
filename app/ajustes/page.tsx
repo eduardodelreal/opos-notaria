@@ -14,6 +14,7 @@ import {
   useConfirmacion,
 } from "@/components/ui";
 import { AvisoSinCuenta, TarjetaSincronizacion } from "@/components/Sincronizacion";
+import { AjustesAvisos } from "@/components/AjustesAvisos";
 import { vaciarAudios } from "@/lib/audio/almacen";
 import type { Perfil } from "@/lib/data/types";
 
@@ -160,6 +161,11 @@ export default function Ajustes() {
             </Selector>
           </div>
         </Card>
+
+        {/* -------------------------------- Avisos ---------------------------- */}
+        {/* Se pinta solo si hay Supabase, sesión y claves VAPID; en cualquier
+            otro caso el propio componente devuelve null. */}
+        <AjustesAvisos />
 
         {/* ------------------------------ Apariencia -------------------------- */}
         <Card>
