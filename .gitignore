@@ -10,3 +10,7 @@ next-env.d.ts
 .DS_Store
 npm-debug.log*
 .netlify/
+
+# Capturas que deja la prueba e2e al ejecutarse desde la raíz.
+# Son artefactos de test, no fuente: 1,7 MB de PNG que cambian en cada pasada.
+capturas/

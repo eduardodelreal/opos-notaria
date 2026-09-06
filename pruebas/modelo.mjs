@@ -907,6 +907,60 @@ console.log("\napariencia");
     assert.ok(probados >= 2500, `solo se han probado ${probados} colores`);
   });
 
+  prueba("elegir un acento con nombre cambia de verdad lo que se pinta", () => {
+    const casa = apariencia(PERFIL_INICIAL).vars;
+    for (const a of ACENTOS) {
+      if (a.id === "lacre" || a.id === "personal") continue;
+      const otro = apariencia({ ...PERFIL_INICIAL, acento: a.id }).vars;
+      assert.notEqual(
+        otro["--lacre"],
+        casa["--lacre"],
+        `el acento ${a.nombre} pinta el mismo color que el lacre de la casa`,
+      );
+      // Y es exactamente el que sale del generador para ese tono: la
+      // pantalla no puede prometer un color y aplicar otro.
+      assert.deepEqual(
+        paletaDe({ ...PERFIL_INICIAL, acento: a.id }),
+        paletaAcento(a.semilla, "dark"),
+      );
+    }
+    // Los cinco acentos son cinco colores distintos, no cinco nombres.
+    const colores = new Set(
+      ACENTOS.map((a) => apariencia({ ...PERFIL_INICIAL, acento: a.id }).vars["--lacre"]),
+    );
+    assert.equal(colores.size, ACENTOS.length, `solo ${colores.size} colores distintos`);
+  });
+
+  prueba("el acento libre es el que ha elegido el opositor, no otro", () => {
+    const p = paletaDe({
+      ...PERFIL_INICIAL,
+      tema: "light",
+      acento: "personal",
+      acentoPersonal: "#2f6fb0",
+    });
+    // Ese azul ya contrasta de sobra sobre el papel: tiene que salir intacto.
+    assert.equal(p.lacre, "#2f6fb0");
+  });
+
+  prueba("el mismo color se adapta a cada fondo cuando hace falta", () => {
+    // Un azul de noche: sobre el papel se lee de sobra y sale tal cual;
+    // sobre el fondo oscuro hay que aclararlo o desaparece.
+    const noche = "#123a6b";
+    const claro = paletaAcento(noche, "light");
+    const oscuro = paletaAcento(noche, "dark");
+    assert.equal(claro.lacre, noche, "sobre papel no había nada que corregir");
+    assert.notEqual(oscuro.lacre, noche, "sobre el fondo oscuro no se ha aclarado");
+    assert.ok(
+      contraste(oscuro.lacre, TONOS[0].bg) > contraste(noche, TONOS[0].bg),
+      "la corrección tiene que MEJORAR el contraste",
+    );
+    // Y un acento bien elegido no se toca en ningún tono: la corrección es
+    // una red de seguridad, no un filtro que reescriba siempre.
+    for (const t of TONOS) {
+      assert.equal(paletaAcento("#2f8f63", t.id).lacre, "#2f8f63");
+    }
+  });
+
   prueba("un acento que ya se lee NO se toca", () => {
     // Un rojo lacre sobre el fondo oscuro cumple de sobra el mínimo de
     // sólido: la corrección es una red de seguridad, no un filtro de marca.

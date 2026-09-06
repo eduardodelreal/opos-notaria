@@ -329,7 +329,7 @@ export function aFilaPerfil(
     dias_oxido: perfil.diasOxido,
     tema: perfil.tema,
     estilo_feedback: perfil.estiloFeedback,
-    acento: perfil.acento,
+    acento: "lacre",
     acento_personal: texto(perfil.acentoPersonal),
     fuente_temas: perfil.fuenteTemas,
     // El check de la columna es `between 15 and 24`: un cuerpo fuera de
