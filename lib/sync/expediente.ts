@@ -84,10 +84,10 @@ export interface Marcas {
    * puros updates, que devuelve marcas de nacimiento viejas. 0 = ninguno.
    */
   desfaseServidor: number;
-  /** Desfase que está pendiente de confirmarse. Ver `medirDesfase`. */
+  /** La mayor de las medidas del bloque en curso. Ver `medirDesfase`. */
   desfaseCandidato: number;
-  /** Medidas coherentes que apoyan al candidato. */
-  desfaseConfirmaciones: number;
+  /** Medidas que lleva el bloque en curso. */
+  desfaseMuestras: number;
 }
 
 export const MARCAS_INICIALES: Marcas = {
@@ -99,7 +99,7 @@ export const MARCAS_INICIALES: Marcas = {
   desfaseReloj: 0,
   desfaseServidor: 0,
   desfaseCandidato: 0,
-  desfaseConfirmaciones: 0,
+  desfaseMuestras: 0,
 };
 
 /**

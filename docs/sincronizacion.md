@@ -180,21 +180,29 @@ vuelta, décimas de segundo.
 
 **Por qué es robusto.** Todo cuelga de una asimetría: `max(creado_at)` nunca
 puede ir por delante del reloj del servidor. Si el lote insertó alguna fila, la
-medida es exacta; si era todo `update`, sale corta. Es decir, **toda muestra es
-una cota inferior del desfase**, nunca una sobreestimación. De ahí:
+medida es exacta; si era todo `update`, `creado_at` es de cuando nacieron esas
+filas y la medida sale corta. Es decir, **toda muestra es una cota inferior del
+desfase**, nunca una sobreestimación. De ahí sale el estimador entero, que por
+eso son tres líneas y no un filtro de Kalman:
 
-- Un lote sin filas nuevas se reconoce sin ambigüedad —su `max(creado_at)` no es
-  más nuevo que el mayor ya visto— y su medida se tira entera.
-- Entre las que quedan, una muestra **por encima** de la estimación es prueba
-  directa de que la estimación se quedaba corta: se adopta sin confirmar.
-  Bajarla, en cambio, exige dos medidas coherentes.
+- El desfase es el **máximo de las últimas cuatro medidas**. Como las medidas
+  cortas nunca superan a las exactas, basta con que una de las cuatro venga de un
+  lote con filas nuevas para que el máximo sea la buena. Ese máximo es a la vez
+  el suavizado: se queda con la mejor mitad de la muestra sin promediar nada.
+- Una medida **por encima** de la estimación es prueba directa de que la
+  estimación se quedaba corta: se adopta en el acto, sin esperar al bloque.
+- **Bajar** solo pasa al cerrar bloque. Ahí está el margen para que el opositor
+  pueda adelantar la hora del móvil sin que un lote suelto de `update` arrastre
+  la estimación entre medias.
+- Una medida cuyo `max(creado_at)` no sea más nuevo que el mayor ya visto se tira
+  sin más: esa fila ya estaba, no dice nada nuevo y ocuparía un hueco del bloque.
 
 Los tres casos feos:
 
 | Caso | Qué hace |
 | --- | --- |
-| La primera medida de todas | No se adopta a ciegas. Si ese primer lote fuera de puros `update`, su `creado_at` podría ser de hace años (el perfil lo crea el alta) y el aparato se creería años atrasado, sellándolo todo por debajo del cursor de los demás. Abre candidatura y espera una segunda que diga lo mismo. |
-| Un desfase que cambia (el opositor pone el móvil en hora) | Las medidas caen de golpe. Tampoco se hace caso a la primera: se pide otra coherente. Mientras tanto se sella con el desfase de ayer, que es lo mejor que se sabía. |
+| La primera medida de todas | No se adopta a ciegas. Si ese primer lote fuera de puros `update`, su `creado_at` podría ser de hace años (el perfil lo crea el alta) y el aparato se creería años atrasado, sellándolo todo por debajo del cursor de los demás. Entra en el bloque como una más y el máximo la deja fuera en cuanto llega una medida de verdad; hasta que el bloque cierre se sella con el reloj local, como antes de todo esto. |
+| Un desfase que cambia (el opositor pone el móvil en hora) | Si la hora se atrasa, las medidas suben y se adopta la primera. Si se adelanta, las medidas bajan y hay que esperar a que cierre el bloque: cuatro pushes de margen. |
 | Latencia confundida con desfase | El punto medio la descuenta, las respuestas de más de 10 s se tiran, y lo que quede se lo come la zona muerta: por debajo de **2 segundos el desfase no se aplica**. |
 
 **Dónde se aplica.** En el embudo `escribir()` del store, que es por donde pasan
@@ -222,9 +230,13 @@ la misma fila no hace nada.
   contra qué medir. Un aparato que lleva semanas trabajando offline sube todo ese
   trabajo con su marca torcida. El tope del cursor evita que eso ciegue a los
   demás, pero esas filas siguen ganando o perdiendo conflictos por el reloj.
-- **Hacen falta dos lotes con inserciones para tener estimación.** Un dispositivo
-  recién instalado sobre una cuenta con datos no tiene nada que insertar hasta que
-  el opositor crea algo; hasta entonces se comporta como antes de todo esto.
+- **Hacen falta cuatro lotes subidos para cerrar el primer bloque.** Un
+  dispositivo recién instalado sobre una cuenta con datos casi no tiene nada que
+  subir; hasta que los junte se comporta como antes de todo esto.
+- **Si los cuatro lotes de un bloque son de puros `update`, la estimación sale
+  corta** —tanto como la edad de la fila más nueva que hayan tocado— y el aparato
+  sella un poco en el pasado hasta que inserte algo. Se arregla solo con la
+  siguiente inserción, que sube la estimación en el acto.
 - **La resolución es media ida y vuelta.** El desfase se estima con ese error,
   así que dos ediciones de la misma fila separadas por menos que la latencia
   siguen sin poder ordenarse. Para arbitrar escrituras de una persona en dos

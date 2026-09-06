@@ -37,15 +37,27 @@ import { ms, type Fila, type Tabla } from "./tablas";
    Toda la robustez cuelga de una asimetría: `max(creado_at)` NUNCA puede ir
    por delante del reloj del servidor. Si el lote insertó alguna fila, la
    medida es exacta; si era todo updates, `creado_at` es de cuando nacieron
-   esas filas y la medida sale corta. O sea, toda muestra es una cota
-   inferior. Dos consecuencias que es lo que hace que esto funcione:
+   esas filas y la medida sale corta. O sea: **toda muestra es una cota
+   inferior del desfase, nunca una sobreestimación**.
 
-     · un lote sin filas nuevas se reconoce sin ambigüedad, porque su
-       `max(creado_at)` NO es más nuevo que el mayor ya visto. Esas medidas
-       se tiran enteras en vez de intentar interpretarlas.
-     · entre las que quedan, una muestra por encima de la estimación es
-       prueba directa de que la estimación se quedaba corta, y se adopta sin
-       más trámite. Bajarla, en cambio, se confirma.
+   De ahí sale el estimador entero, que por eso es de tres líneas y no un
+   filtro de Kalman:
+
+     · el desfase es el MÁXIMO de las últimas cuatro medidas. Como las
+       medidas cortas nunca superan a las exactas, basta con que una de las
+       cuatro venga de un lote con filas nuevas para que el máximo sea la
+       buena. Ese máximo es a la vez el suavizado: descarta la mitad mala de
+       la muestra sin promediar nada.
+     · una medida que supera la estimación es prueba directa de que la
+       estimación se quedaba corta, así que se adopta en el acto sin esperar
+       a que cierre el bloque.
+     · bajar, en cambio, solo pasa al cerrar bloque. Ahí está el margen para
+       que el opositor pueda poner el móvil en hora sin que un lote suelto
+       de updates arrastre la estimación entre medias.
+
+   Y una medida cuyo `max(creado_at)` no sea más nuevo que el mayor ya visto
+   se tira sin más: esa fila ya estaba, no dice nada que no supiéramos, y
+   ocuparía un hueco del bloque.
 
    Solo se miran las tablas cuyo push NO manda `creado_at`. En `epigrafes`,
    `keypoints` y `notas` el cliente sí lo manda, así que el servidor le
@@ -86,14 +98,12 @@ const RTT_MAXIMO = 10_000;
  */
 const UMBRAL_APLICAR = 2_000;
 
-/** Cuánto pueden diferir dos medidas y seguir considerándose la misma. */
-const TOLERANCIA = 10_000;
-
-/** Medidas coherentes que hacen falta para mover el desfase con confianza. */
-const CONFIRMACIONES = 2;
-
-/** Peso de la muestra cuando solo corrige ruido: suavizado de un cuarto. */
-const SUAVIZADO = 4;
+/**
+ * Medidas por bloque. Es la ventana del máximo, y por tanto las dos cosas a
+ * la vez: cuántos lotes sin filas nuevas se toleran seguidos, y cuánto tarda
+ * en adoptarse una hora nueva del aparato.
+ */
+const MUESTRAS_POR_BLOQUE = 4;
 
 /** Una medida útil: el desfase que implica y el reloj del servidor que la dio. */
 export interface Muestra {
@@ -159,71 +169,46 @@ export function muestraDeRespuesta(
  *     prudencia genérica: si ese primer lote fuera de puros updates, su
  *     `creado_at` podría ser de hace años (el perfil lo crea el alta) y el
  *     aparato se creería años atrasado, sellándolo todo por debajo del
- *     cursor de los demás. Así que la primera medida solo abre candidatura;
- *     hace falta una segunda que diga lo mismo. Las de un lote sin filas
- *     nuevas no llegan siquiera a candidatas, porque su `creado_at` no es
- *     más nuevo que el mayor ya visto.
+ *     cursor de los demás. Entra en el bloque como una más, y el máximo del
+ *     bloque la deja fuera en cuanto llega una medida de verdad. Hasta que
+ *     el bloque cierre se sella con el reloj local, como antes de todo esto.
  *
- *   · **un desfase que cambia** (el opositor pone en hora el móvil). Las
- *     medidas caen de golpe muy por debajo de la estimación. Tampoco se hace
- *     caso a la primera; se pide que lo repita otra. Mientras tanto el
- *     aparato sigue sellando con el desfase de ayer, que es lo mejor que
- *     sabía.
+ *   · **un desfase que cambia** (el opositor pone en hora el móvil). Si la
+ *     hora se atrasa, las medidas suben y se adopta la primera. Si se
+ *     adelanta, las medidas bajan y hay que esperar a que cierre el bloque:
+ *     cuatro pushes de margen para no hacer caso a un lote sin filas nuevas.
  *
  *   · **la latencia confundida con desfase.** El punto medio de la ida y
  *     vuelta la descuenta, las respuestas demasiado lentas se tiran, y lo
  *     que quede se lo come la zona muerta de `desfaseAplicable`.
- *
- * Y si aun así la estimación se queda corta, se arregla sola: la siguiente
- * inserción da una medida por encima y esa se adopta sin confirmar, porque
- * una cota inferior que supera la estimación no puede ser ruido.
  */
 export function medirDesfase(marcas: Marcas, muestra: Muestra): Partial<Marcas> | null {
   if (!Number.isFinite(muestra.desfase) || !Number.isFinite(muestra.servidor)) return null;
 
   const visto = marcas.desfaseServidor ?? 0;
-  // El lote no ha insertado nada: su `creado_at` es de filas que ya estaban,
-  // así que la medida sale corta y no hay forma de saber cuánto. Se tira.
+  // El lote no ha traído ninguna fila nacida después de la última medida: su
+  // `creado_at` no dice nada nuevo y gastaría un hueco del bloque.
   if (visto && muestra.servidor <= visto) return null;
 
   const desfase = marcas.desfaseReloj ?? 0;
-  const candidato = marcas.desfaseCandidato ?? 0;
-  const confirmaciones = marcas.desfaseConfirmaciones ?? 0;
-  const coherente =
-    confirmaciones > 0 && Math.abs(muestra.desfase - candidato) <= TOLERANCIA;
+  const vistas = marcas.desfaseMuestras ?? 0;
+  const mejor = vistas ? Math.max(marcas.desfaseCandidato ?? 0, muestra.desfase) : muestra.desfase;
 
-  // Cierra la candidatura adoptando la media de las medidas que la apoyan.
-  const adoptar = (valor: number): Partial<Marcas> => ({
+  const cerrar = (valor: number): Partial<Marcas> => ({
     desfaseReloj: valor,
     desfaseServidor: muestra.servidor,
     desfaseCandidato: 0,
-    desfaseConfirmaciones: 0,
+    desfaseMuestras: 0,
   });
-  const proponer = (): Partial<Marcas> => ({
+
+  // Una cota inferior por encima de la estimación no puede ser ruido: la
+  // estimación era baja y punto. Se sube sin esperar al bloque.
+  if (muestra.desfase > desfase) return cerrar(muestra.desfase);
+  if (vistas + 1 >= MUESTRAS_POR_BLOQUE) return cerrar(mejor);
+
+  return {
     desfaseServidor: muestra.servidor,
-    desfaseCandidato: coherente ? (candidato + muestra.desfase) / 2 : muestra.desfase,
-    desfaseConfirmaciones: coherente ? confirmaciones + 1 : 1,
-  });
-
-  const propuesta = proponer();
-  const listo = (propuesta.desfaseConfirmaciones ?? 0) >= CONFIRMACIONES;
-
-  // Todavía sin estimación: se sella con el reloj local tal cual, como se
-  // hacía antes de todo esto, hasta que dos medidas coincidan.
-  if (!desfase) {
-    return listo ? adoptar(propuesta.desfaseCandidato ?? 0) : propuesta;
-  }
-
-  // Una cota inferior por encima de la estimación demuestra que la
-  // estimación era baja. Se sube en el acto y sin confirmar.
-  if (muestra.desfase >= desfase) return adoptar(muestra.desfase);
-
-  // Por debajo pero cerca: ruido de latencia, o la deriva lenta de un reloj
-  // barato que se adelanta unos segundos al mes.
-  if (desfase - muestra.desfase <= TOLERANCIA) {
-    return adoptar(desfase + (muestra.desfase - desfase) / SUAVIZADO);
-  }
-
-  // Muy por debajo: la hora del aparato ha cambiado. Se confirma primero.
-  return listo ? adoptar(propuesta.desfaseCandidato ?? 0) : propuesta;
+    desfaseCandidato: mejor,
+    desfaseMuestras: vistas + 1,
+  };
 }

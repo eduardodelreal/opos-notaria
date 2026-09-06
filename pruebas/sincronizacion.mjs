@@ -968,60 +968,78 @@ const SIN_MEDIR = {
   desfaseReloj: 0,
   desfaseServidor: 0,
   desfaseCandidato: 0,
-  desfaseConfirmaciones: 0,
+  desfaseMuestras: 0,
 };
 
-prueba("la primera medida abre candidatura pero no se adopta a ciegas", () => {
+/** Encadena medidas como lo hace el motor, una por lote subido. */
+function medidas(inicial, lista) {
+  let m = { ...inicial };
+  for (const [desfase, servidor] of lista) {
+    const r = medirDesfase(m, { desfase, servidor });
+    if (r) m = { ...m, ...r };
+  }
+  return m;
+}
+
+prueba("una medida suelta no mueve el desfase hacia abajo", () => {
+  // Podría venir de un lote sin filas nuevas, que siempre mide de menos.
   const r = medirDesfase(SIN_MEDIR, { desfase: -300_000, servidor: 1_000 });
-  assert.equal(r.desfaseReloj, undefined, "ha adoptado una medida sin confirmar");
+  assert.equal(r.desfaseReloj, undefined, "ha adoptado una medida suelta");
   assert.equal(r.desfaseCandidato, -300_000);
-  assert.equal(r.desfaseConfirmaciones, 1);
 });
 
-prueba("dos medidas coherentes sí la adoptan", () => {
-  let m = { ...SIN_MEDIR };
-  m = { ...m, ...medirDesfase(m, { desfase: -300_000, servidor: 1_000 }) };
-  m = { ...m, ...medirDesfase(m, { desfase: -300_200, servidor: 2_000 }) };
-  assert.ok(Math.abs(m.desfaseReloj + 300_100) < 500, `desfase = ${m.desfaseReloj}`);
+prueba("al cerrar el bloque se adopta la MAYOR de sus medidas", () => {
+  // La tercera es la buena: las otras tres son lotes de puros updates, que
+  // miden de menos porque su `creado_at` es de cuando nacieron las filas.
+  const m = medidas(SIN_MEDIR, [
+    [-480_900, 1_000],
+    [-540_000, 2_000],
+    [-480_020, 3_000],
+    [-495_000, 4_000],
+  ]);
+  assert.equal(m.desfaseReloj, -480_020, `desfase = ${m.desfaseReloj}`);
 });
 
-prueba("un lote sin filas nuevas no cuenta como medida", () => {
-  // Su `creado_at` no es más nuevo que el mayor ya visto: la fila ya estaba,
-  // así que la medida sale corta y no hay forma de saber cuánto.
+prueba("un lote sin filas más nuevas no cuenta como medida", () => {
   const m = { ...SIN_MEDIR, desfaseServidor: 5_000, desfaseReloj: -300_000 };
   assert.equal(medirDesfase(m, { desfase: -900_000, servidor: 4_000 }), null);
   assert.equal(medirDesfase(m, { desfase: -900_000, servidor: 5_000 }), null);
 });
 
-prueba("una medida por encima sube el desfase sin pedir confirmación", () => {
+prueba("una medida por encima sube el desfase sin esperar al bloque", () => {
   const m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
   assert.equal(medirDesfase(m, { desfase: -290_000, servidor: 2_000 }).desfaseReloj, -290_000);
 });
 
-prueba("una medida muy por debajo no baja el desfase a la primera", () => {
-  const m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
-  const r = medirDesfase(m, { desfase: -900_000, servidor: 2_000 });
-  assert.equal(r.desfaseReloj, undefined, "ha bajado sin confirmarse");
-  assert.equal(r.desfaseConfirmaciones, 1);
+prueba("bajarlo, en cambio, espera a que cierre el bloque", () => {
+  // El opositor adelanta la hora del móvil ocho minutos: todas las medidas
+  // caen a la vez y la nueva se adopta, pero no a la primera.
+  const antes = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: 0 };
+  const parcial = medidas(antes, [
+    [-480_000, 2_000],
+    [-480_100, 3_000],
+  ]);
+  assert.equal(parcial.desfaseReloj, 0, "ha bajado con dos medidas");
+  const cerrado = medidas(antes, [
+    [-480_000, 2_000],
+    [-480_100, 3_000],
+    [-480_050, 4_000],
+    [-480_030, 5_000],
+  ]);
+  assert.equal(cerrado.desfaseReloj, -480_000, `desfase = ${cerrado.desfaseReloj}`);
 });
 
-prueba("dos medidas seguidas y coherentes sí lo bajan (móvil puesto en hora)", () => {
-  let m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
-  m = { ...m, ...medirDesfase(m, { desfase: -900_000, servidor: 2_000 }) };
-  m = { ...m, ...medirDesfase(m, { desfase: -900_100, servidor: 3_000 }) };
-  assert.ok(Math.abs(m.desfaseReloj + 900_050) < 500, `desfase = ${m.desfaseReloj}`);
-});
-
-prueba("medidas discordantes entre sí no confirman nada", () => {
-  let m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
-  for (const [desfase, servidor] of [
-    [-900_000, 2_000],
-    [-1_400_000, 3_000],
-    [-2_000_000, 4_000],
-  ]) {
-    m = { ...m, ...medirDesfase(m, { desfase, servidor }) };
-  }
-  assert.equal(m.desfaseReloj, -300_000, "ha adoptado un desfase que nadie confirmó");
+prueba("un aparato en hora no se desvía por lotes de puros updates", () => {
+  // El caso que rompía la versión anterior: filas creadas hace unos segundos
+  // por otro dispositivo, que este solo actualiza. Miden de menos, pero el
+  // máximo del bloque las ignora mientras haya una medida buena.
+  const m = medidas(SIN_MEDIR, [
+    [-2_400, 1_000],
+    [-8_000, 2_000],
+    [-15, 3_000],
+    [-4_100, 4_000],
+  ]);
+  assert.equal(desfaseAplicable(m), 0, `se ha desviado a ${m.desfaseReloj} ms`);
 });
 
 prueba("un desfase de menos de dos segundos no se aplica", () => {
