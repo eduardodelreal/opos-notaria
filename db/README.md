@@ -14,6 +14,7 @@ sobre una base ya migrada sin romper nada.
 | `migrations/0001_esquema_inicial.sql` | Tablas, triggers de `updated_at` y de borrado en cascada lógica, índices, RLS y alta automática de perfil. |
 | `migrations/0002_storage_audio.sql` | Bucket privado `cantes-audio` y políticas de Storage. |
 | `migrations/0003_vueltas_y_avisos.sql` | Tabla `vueltas` (append-only, sustituye al contador de `progreso_temas`), `suscripciones_aviso` para el Web Push y las preferencias de aviso en `perfiles`. |
+| `migrations/0004_avisos_enviados.sql` | Memoria de qué aviso se mandó a quién y qué día. Sin ella el tope de «uno al día» aguanta, pero el anti-repetición no: el mismo aviso llegaría cada mañana. Solo la escribe el cron con `service_role`. |
 
 `0002` no depende de `0001`, pero aplícalos igualmente en orden. `0003` sí
 depende: reutiliza `tocar_updated_at()` y **redefine** `cascada_borrado_tema()`
@@ -36,6 +37,7 @@ mkdir -p supabase/migrations
 cp db/migrations/0001_esquema_inicial.sql supabase/migrations/20250101000001_esquema_inicial.sql
 cp db/migrations/0002_storage_audio.sql   supabase/migrations/20250101000002_storage_audio.sql
 cp db/migrations/0003_vueltas_y_avisos.sql supabase/migrations/20250101000003_vueltas_y_avisos.sql
+cp db/migrations/0004_avisos_enviados.sql  supabase/migrations/20250101000004_avisos_enviados.sql
 supabase db push
 ```
 

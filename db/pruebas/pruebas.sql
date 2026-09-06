@@ -1067,6 +1067,105 @@ end;
 $$;
 
 -- ============================================================================
+-- 9bis · avisos_enviados (0004)
+--
+-- Es la memoria de qué aviso se mandó. Sin ella el anti-repeticion no existe,
+-- asi que el opositor recibiria el mismo "llevas 11 dias sin tocar
+-- Hipotecario" cada manana. Y es la unica tabla del esquema que el usuario
+-- puede leer pero no escribir: si pudiera insertar, se silenciaria solo.
+-- ============================================================================
+
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  n int;
+  hoy date := current_date;
+begin
+  -- El cron escribe con el rol de servidor (service_role se salta la RLS).
+  perform pruebas.servidor();
+  insert into public.avisos_enviados (usuario_id, clave, tipo, titulo, cuerpo, url, dia)
+  values (a, 'oxido:tema:' || pruebas.id('aaaa1111', 2), 'oxido',
+          'Tema 2 lleva 47 dias parado', 'Repasalo hoy', '/tema/x', hoy);
+
+  -- El tope diario lo impone la base, no solo el codigo: dos pasadas
+  -- solapadas del cron no pueden colar un segundo aviso.
+  perform pruebas.comprobar('avisos', 'un unico aviso por usuario y dia (indice unico)',
+    pruebas.rechazado(format(
+      'insert into public.avisos_enviados (usuario_id, clave, tipo, titulo, cuerpo, url, dia)
+       values (%L, %L, %L, %L, %L, %L, %L)',
+      a, 'racha', 'racha', 'Se te rompe la racha', 'Hoy no has estudiado', '/', hoy),
+      '23505'),
+    'esperaba violacion de unicidad');
+
+  -- Otro dia si, y otro usuario el mismo dia tambien.
+  insert into public.avisos_enviados (usuario_id, clave, tipo, titulo, cuerpo, url, dia)
+  values (a, 'racha', 'racha', 'Racha', 'x', '/', hoy - 1),
+         (b, 'ritmo:2026-09-01', 'ritmo', 'Ritmo', 'x', '/', hoy);
+  select count(*) into n from public.avisos_enviados;
+  perform pruebas.comprobar('avisos', 'el tope es por usuario y dia, no global',
+    n = 3, 'filas: ' || n);
+
+  -- Aislamiento: cada opositor solo ve su historial.
+  perform pruebas.como(a);
+  select count(*) into n from public.avisos_enviados;
+  perform pruebas.comprobar('avisos', 'la RLS aisla el historial entre usuarios',
+    n = 2, 'A ve ' || n || ' filas (deberia ver 2)');
+
+  -- Sin politica de insert: nadie puede fabricarse un historial falso para
+  -- silenciarse los avisos a si mismo.
+  perform pruebas.comprobar('avisos', 'el usuario NO puede insertar avisos',
+    pruebas.rechazado(format(
+      'insert into public.avisos_enviados (usuario_id, clave, tipo, titulo, cuerpo, url, dia)
+       values (%L, %L, %L, %L, %L, %L, %L)',
+      a, 'inventado', 'oxido', 'x', 'x', '/', hoy + 1)),
+    'esperaba rechazo por RLS');
+
+  -- Ni borrar el historial para reiniciar el contador. Ojo: sin politica de
+  -- DELETE, Postgres NO lanza error; simplemente el DELETE no ve ninguna fila
+  -- y borra cero. Hay que comprobar el efecto, no la excepcion.
+  delete from public.avisos_enviados;
+  select count(*) into n from public.avisos_enviados;
+  perform pruebas.comprobar('avisos', 'el borrado del usuario no elimina nada (0 filas afectadas)',
+    n = 2, 'A sigue viendo ' || n || ' filas tras intentar borrarlas');
+
+  perform pruebas.servidor();
+  select count(*) into n from public.avisos_enviados;
+  perform pruebas.comprobar('avisos', 'el historial completo sigue intacto en el servidor',
+    n = 3, 'filas totales: ' || n);
+
+  perform pruebas.servidor();
+end;
+$$;
+
+-- El indice del anti-repeticion tiene que usarse de verdad: esta consulta se
+-- hace por cada usuario en cada pasada del cron.
+do $$
+declare
+  plan text;
+begin
+  perform pruebas.servidor();
+  -- Con tres filas el planificador siempre elegira Seq Scan, asi que un
+  -- EXPLAIN a secas no dice nada. Apagando seqscan comprobamos lo que de
+  -- verdad importa: que EXISTE un indice que cubre esta consulta, la que el
+  -- cron hace por cada usuario en cada pasada.
+  set local enable_seqscan = off;
+
+  -- En formato texto EXPLAIN devuelve una fila por linea y `into` solo coge
+  -- la primera, que nunca menciona el indice. En JSON es una unica fila con
+  -- el plan entero.
+  execute 'explain (format json) select 1 from public.avisos_enviados
+             where usuario_id = ''11111111-1111-4111-8111-111111111111''
+               and clave = ''racha''
+             order by dia desc limit 1'
+    into plan;
+  perform pruebas.comprobar('avisos', 'el indice de anti-repeticion se usa',
+    plan ilike '%avisos_enviados_clave_idx%',
+    'plan: ' || left(plan, 200));
+end;
+$$;
+
+-- ============================================================================
 -- 10 · Resumen
 -- ============================================================================
 

@@ -40,13 +40,18 @@ local y en un despliegue solo-Railway todo funciona sin tocar nada.
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | sí | sí | **Se incrusta al compilar**. Es pública por diseño; la seguridad la da RLS |
 | `NEXT_PUBLIC_IA_URL` | **vacía** | URL de Railway | **Se incrusta al compilar** |
 | `ORIGENES_PERMITIDOS` | dominio de Netlify | no | CORS. Sin esto el navegador bloquea las llamadas |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | sí | sí | Avisos push. **Se incrusta al compilar** |
 
 > Las `NEXT_PUBLIC_*` se leen **en tiempo de compilación**, no de ejecución.
 > Si las declaras después de construir, no surten efecto: hay que volver a
 > desplegar.
 
-La `service_role` de Supabase **no se usa en ningún sitio** y no debe estar en
-ninguna variable de entorno de este proyecto.
+La `service_role` de Supabase **no la usa la app web** y no debe aparecer en
+ninguna variable de su build. La usa únicamente el **cron de avisos**, que
+corre como un servicio aparte en Railway y necesita leer datos de todos los
+usuarios para decidir a quién avisar. Vive solo en el entorno de ese cron:
+nunca en Netlify, nunca en el servicio web de Railway, y jamás en una
+variable `NEXT_PUBLIC_*`. Ver `docs/avisos.md`.
 
 ---
 
@@ -69,6 +74,8 @@ ninguna variable de entorno de este proyecto.
    su Client ID/Secret; en Google Cloud hay que registrar la *Authorized
    redirect URI* que da Supabase (`https://<proyecto>.supabase.co/auth/v1/callback`).
 5. **Project Settings → API**: copiar *Project URL* y la clave *anon*.
+6. Si quieres los avisos push, hay un tercer servicio (un cron en Railway) con
+   su propia configuración: `docs/avisos.md`.
 
 ### Comprobación
 
