@@ -42,7 +42,7 @@ export async function POST(req: Request) {
           }`,
         },
       ],
-    });
+    }, { signal: req.signal });
 
     if (esRechazo(respuesta)) {
       return Response.json(

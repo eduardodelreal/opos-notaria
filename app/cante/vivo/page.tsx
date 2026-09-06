@@ -17,7 +17,7 @@ import {
 import { ComparativaEpigrafes } from "@/components/graficos";
 import { FALLOS, type CanteEpigrafe, type TipoFallo } from "@/lib/data/types";
 import { reloj } from "@/lib/utils/time";
-import { useFicha, useIA } from "@/lib/ai/hooks";
+import { useFicha, useIA , rutaIA } from "@/lib/ai/hooks";
 import { construirDetalleCante } from "@/lib/ai/contexto";
 
 export default function PaginaCanteVivo() {
@@ -440,7 +440,7 @@ function Resumen({
           cantesPrevios,
           perfil.minutosPorTema,
         );
-        const r = await fetch("/api/ai/analisis-cante", {
+        const r = await fetch(rutaIA("/api/ai/analisis-cante"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

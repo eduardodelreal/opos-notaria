@@ -28,7 +28,7 @@ import {
 } from "@/components/ui";
 import { urgencia } from "@/lib/data/srs";
 import { fecha, reloj } from "@/lib/utils/time";
-import { useIA } from "@/lib/ai/hooks";
+import { useIA , rutaIA } from "@/lib/ai/hooks";
 import type { Simulacro, Tema } from "@/lib/data/types";
 
 export default function Simulacros() {
@@ -416,7 +416,7 @@ function Dictamen() {
     setCargando(modo);
     setError(null);
     try {
-      const r = await fetch("/api/ai/dictamen", {
+      const r = await fetch(rutaIA("/api/ai/dictamen"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

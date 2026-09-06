@@ -41,7 +41,7 @@ import { estadoEfectivo, intervaloDias, ultimoContacto } from "@/lib/data/srs";
 import { aEpigrafes, minutosEstimados, parsearEpigrafes } from "@/lib/data/parser";
 import { fecha, haceTexto, horasMin, reloj } from "@/lib/utils/time";
 import { plural } from "@/lib/utils/texto";
-import { useFicha, useIA } from "@/lib/ai/hooks";
+import { useFicha, useIA , rutaIA } from "@/lib/ai/hooks";
 import { construirDetalleCante } from "@/lib/ai/contexto";
 import { TarjetaAnalisis } from "@/components/TarjetaAnalisis";
 
@@ -581,7 +581,7 @@ function PanelCantes({
         anteriores,
         perfil.minutosPorTema,
       );
-      const r = await fetch("/api/ai/analisis-cante", {
+      const r = await fetch(rutaIA("/api/ai/analisis-cante"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -813,7 +813,7 @@ function PanelKeyPoints({
     setGenerando(true);
     setError(null);
     try {
-      const r = await fetch("/api/ai/keypoints", {
+      const r = await fetch(rutaIA("/api/ai/keypoints"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ texto: textoTema, tema: tema.titulo }),

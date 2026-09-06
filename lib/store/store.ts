@@ -132,7 +132,6 @@ interface Acciones {
 
   // --- chat ---
   addMensaje: (m: Omit<MensajeChat, "id" | "creado">) => MensajeChat;
-  actualizarUltimoMensaje: (texto: string) => void;
   limpiarChat: () => void;
 
   // --- datos ---
@@ -631,14 +630,6 @@ export const useStore = create<Store>()(
         set((s) => ({ chat: [...s.chat, mensaje] }));
         return mensaje;
       },
-
-      actualizarUltimoMensaje: (texto) =>
-        set((s) => {
-          if (!s.chat.length) return {};
-          const chat = [...s.chat];
-          chat[chat.length - 1] = { ...chat[chat.length - 1], texto };
-          return { chat };
-        }),
 
       limpiarChat: () => set({ chat: [] }),
 

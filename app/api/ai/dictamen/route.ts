@@ -59,7 +59,7 @@ export async function POST(req: Request) {
         },
       ],
       messages: [{ role: "user", content: contenido }],
-    });
+    }, { signal: req.signal });
 
     if (esRechazo(respuesta)) {
       return Response.json(

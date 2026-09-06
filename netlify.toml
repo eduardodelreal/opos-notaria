@@ -1,0 +1,32 @@
+# Despliegue en Netlify.
+#
+# El Next.js Runtime de Netlify se autodetecta cuando hay un `next` en las
+# dependencias, pero lo declaramos de forma explícita para que el build sea
+# reproducible y no dependa de la heurística de detección. Netlify lo instala
+# solo: no hace falta añadirlo a package.json.
+#
+# AVISO IMPORTANTE sobre las rutas de IA (app/api/ai/*):
+# se sirven como Netlify Functions (AWS Lambda) y el tope de ejecución
+# síncrona es de 10 s por defecto y 30 s como máximo en planes de pago.
+# Las rutas exportan `maxDuration` de 120-300 s, valores que Netlify NO puede
+# respetar: /api/ai/plan, /api/ai/keypoints, /api/ai/dictamen y los cantes
+# largos se cortarán con un 502/timeout. El chat en streaming empieza a
+# devolver texto enseguida, pero la conexión también muere al llegar al tope.
+# Para uso real de esos módulos, desplegar en Railway (contenedor, sin tope).
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NPM_FLAGS = "--include=dev"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# `netlify dev` levanta el servidor de desarrollo de Next.
+[dev]
+  command = "npm run dev"
+  targetPort = 3000

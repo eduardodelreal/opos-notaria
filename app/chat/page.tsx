@@ -13,7 +13,8 @@ import {
 import { useStore } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import { Boton, Card, TituloSeccion, Vacio, cx } from "@/components/ui";
-import { useFicha, useIA } from "@/lib/ai/hooks";
+import { useFicha, useIA, rutaIA } from "@/lib/ai/hooks";
+import { FIN_RESPUESTA } from "@/lib/ai/protocolo";
 import { resumenGlobal } from "@/lib/data/srs";
 import { horas } from "@/lib/utils/time";
 
@@ -41,13 +42,23 @@ const SUGERENCIAS = [
 export default function Chat() {
   const ia = useIA();
   const ficha = useFicha();
-  const { chat, perfil, temas, progresos, sesiones, cantes } = useStore();
+  // Un selector por campo: con `useStore()` a pelo, la pagina se re-renderiza
+  // ante cualquier cambio del store, venga de donde venga.
+  const chat = useStore((s) => s.chat);
+  const perfil = useStore((s) => s.perfil);
+  const temas = useStore((s) => s.temas);
+  const progresos = useStore((s) => s.progresos);
+  const sesiones = useStore((s) => s.sesiones);
+  const cantes = useStore((s) => s.cantes);
   const addMensaje = useStore((s) => s.addMensaje);
-  const actualizarUltimo = useStore((s) => s.actualizarUltimoMensaje);
   const limpiar = useStore((s) => s.limpiarChat);
 
   const [entrada, setEntrada] = React.useState("");
   const [generando, setGenerando] = React.useState(false);
+  // La respuesta en curso vive en estado local, no en el store. Escribirla en
+  // el store token a token serializaria el expediente entero en IndexedDB en
+  // cada chunk: cientos de KB por token en cuanto llevas unos meses de datos.
+  const [borrador, setBorrador] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const abortRef = React.useRef<AbortController | null>(null);
   const finRef = React.useRef<HTMLDivElement>(null);
@@ -59,7 +70,7 @@ export default function Chat() {
 
   React.useEffect(() => {
     finRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [chat]);
+  }, [chat, borrador]);
 
   const enviar = async (texto: string) => {
     const limpio = texto.trim();
@@ -73,14 +84,16 @@ export default function Chat() {
       ...useStore.getState().chat.map((m) => ({ rol: m.rol, texto: m.texto })),
     ];
 
-    addMensaje({ rol: "assistant", texto: "" });
+    setBorrador("");
     setGenerando(true);
 
     const controlador = new AbortController();
     abortRef.current = controlador;
+    let acumulado = "";
+    let completa = false;
 
     try {
-      const r = await fetch("/api/ai/chat", {
+      const r = await fetch(rutaIA("/api/ai/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -94,21 +107,25 @@ export default function Chat() {
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         setError(d.mensaje ?? "El modelo no ha podido responder.");
-        actualizarUltimo("");
         return;
       }
 
       const reader = r.body?.getReader();
       if (!reader) throw new Error("Respuesta vacía del servidor.");
       const decoder = new TextDecoder();
-      let acumulado = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         acumulado += decoder.decode(value, { stream: true });
-        actualizarUltimo(acumulado);
+        setBorrador(acumulado);
       }
+
+      // El servidor cierra con un centinela. Si no llega, la conexión se
+      // cortó a medias (tope de una función serverless, red caída) y hay
+      // que decirlo en vez de guardar media respuesta como si fuera entera.
+      completa = acumulado.endsWith(FIN_RESPUESTA);
+      acumulado = acumulado.replaceAll(FIN_RESPUESTA, "");
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         setError((e as Error).message);
@@ -116,12 +133,17 @@ export default function Chat() {
     } finally {
       setGenerando(false);
       abortRef.current = null;
-      // Si el turno quedó vacío (error o cancelación inmediata), lo quitamos.
-      const estado = useStore.getState();
-      const ultimo = estado.chat[estado.chat.length - 1];
-      if (ultimo && ultimo.rol === "assistant" && !ultimo.texto.trim()) {
-        useStore.setState({ chat: estado.chat.slice(0, -1) });
+      // El borrador se vuelca al store UNA sola vez, al terminar.
+      const final = acumulado.replaceAll(FIN_RESPUESTA, "").trim();
+      if (final) {
+        addMensaje({
+          rol: "assistant",
+          texto: completa
+            ? final
+            : `${final}\n\n[Respuesta cortada antes de terminar. Vuelve a preguntar o pide que continúe.]`,
+        });
       }
+      setBorrador(null);
     }
   };
 
@@ -204,41 +226,11 @@ export default function Chat() {
               )}
             </div>
           ) : (
-            chat.map((m) => (
-              <div
-                key={m.id}
-                className={cx(
-                  "flex",
-                  m.rol === "user" ? "justify-end" : "justify-start",
-                )}
-              >
-                <div
-                  className={cx(
-                    "max-w-[85%] rounded-[14px] px-4 py-3",
-                    m.rol === "user"
-                      ? "bg-[var(--surface-3)]"
-                      : "bg-transparent border border-[var(--border)]",
-                  )}
-                >
-                  {m.rol === "assistant" && (
-                    <div className="flex items-center gap-2 mb-2">
-                      <Sparkles className="size-3 text-[var(--laton)]" />
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-subtle">
-                        Preparador
-                      </span>
-                    </div>
-                  )}
-                  <div className="text-[14px] leading-[1.7] whitespace-pre-wrap">
-                    {m.texto}
-                    {generando &&
-                      m.rol === "assistant" &&
-                      m.id === chat[chat.length - 1]?.id && (
-                        <span className="inline-block w-[2px] h-[15px] bg-[var(--laton)] ml-0.5 align-middle animate-pulse" />
-                      )}
-                  </div>
-                </div>
-              </div>
-            ))
+            chat.map((m) => <Burbuja key={m.id} rol={m.rol} texto={m.texto} />)
+          )}
+
+          {borrador !== null && (
+            <Burbuja rol="assistant" texto={borrador} escribiendo />
           )}
           <div ref={finRef} />
         </div>
@@ -293,5 +285,45 @@ export default function Chat() {
         </div>
       </Card>
     </>
+  );
+}
+
+/** Una intervención de la conversación. Se usa igual para los mensajes ya
+ *  guardados y para la respuesta que está llegando en streaming. */
+function Burbuja({
+  rol,
+  texto,
+  escribiendo,
+}: {
+  rol: "user" | "assistant";
+  texto: string;
+  escribiendo?: boolean;
+}) {
+  return (
+    <div className={cx("flex", rol === "user" ? "justify-end" : "justify-start")}>
+      <div
+        className={cx(
+          "max-w-[85%] rounded-[14px] px-4 py-3",
+          rol === "user"
+            ? "bg-[var(--surface-3)]"
+            : "bg-transparent border border-[var(--border)]",
+        )}
+      >
+        {rol === "assistant" && (
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="size-3 text-[var(--laton)]" />
+            <span className="text-[10px] uppercase tracking-[0.14em] text-subtle">
+              Preparador
+            </span>
+          </div>
+        )}
+        <div className="text-[14px] leading-[1.7] whitespace-pre-wrap">
+          {texto}
+          {escribiendo && (
+            <span className="inline-block w-[2px] h-[15px] bg-[var(--laton)] ml-0.5 align-middle animate-pulse" />
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

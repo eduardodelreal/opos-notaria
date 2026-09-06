@@ -7,9 +7,13 @@ import {
   sinClave,
 } from "@/lib/ai/client";
 import { sistemaChat } from "@/lib/ai/prompts";
+import { FIN_RESPUESTA } from "@/lib/ai/protocolo";
 import type { Perfil } from "@/lib/data/types";
 
 export const runtime = "nodejs";
+// Ojo: `maxDuration` solo lo leen los adaptadores serverless que lo
+// soportan. En Netlify Functions se ignora y manda el tope del plan
+// (10-30 s); de ahi el centinela de fin de respuesta.
 export const maxDuration = 300;
 
 /**
@@ -81,6 +85,11 @@ export async function POST(req: Request) {
               ),
             );
           }
+          // Centinela de cierre limpio. Si la conexión se corta antes de
+          // tiempo (funciones serverless con tope de ejecución, red caída),
+          // el cliente no lo recibe y marca la respuesta como truncada en
+          // vez de guardarla como si estuviera completa.
+          controller.enqueue(encoder.encode(FIN_RESPUESTA));
         } catch (e) {
           controller.enqueue(
             encoder.encode(

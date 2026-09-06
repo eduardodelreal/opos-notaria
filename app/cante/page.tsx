@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Mic, Search, Shuffle } from "lucide-react";
 import { useStore, temasOrdenados } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
@@ -12,6 +13,7 @@ import { fecha, haceTexto, reloj } from "@/lib/utils/time";
 import { plural } from "@/lib/utils/texto";
 
 export default function ElegirCante() {
+  const router = useRouter();
   const { temas, materias, progresos, perfil, cantes } = useStore();
   const [busqueda, setBusqueda] = React.useState("");
   const [materiaId, setMateriaId] = React.useState("todas");
@@ -41,7 +43,9 @@ export default function ElegirCante() {
     const pool = candidatos.length ? candidatos : lista;
     if (!pool.length) return;
     const t = pool[Math.floor(Math.random() * pool.length)];
-    window.location.href = `/cante/vivo?tema=${t.id}`;
+    // router.push, no window.location: una recarga completa vacia el estado
+    // en memoria y obliga a rehidratar el expediente desde IndexedDB.
+    router.push(`/cante/vivo?tema=${t.id}`);
   };
 
   const ultimos = React.useMemo(

@@ -107,7 +107,7 @@ export async function POST(req: Request) {
           content: `${body.ficha}\n\n---\n\n${body.detalleCante}\n\n---\n\nAnaliza este cante.`,
         },
       ],
-    });
+    }, { signal: req.signal });
 
     if (esRechazo(respuesta)) {
       return Response.json(

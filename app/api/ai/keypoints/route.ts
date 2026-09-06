@@ -75,7 +75,7 @@ export async function POST(req: Request) {
           }\nTexto:\n\n${body.texto}\n\n---\n\nExtrae los puntos clave.`,
         },
       ],
-    });
+    }, { signal: req.signal });
 
     if (esRechazo(respuesta)) {
       return Response.json(
