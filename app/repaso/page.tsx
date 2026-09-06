@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { Brain, Check, Eye, Play, RotateCcw, X } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useProgresos, useStore } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
   Badge,
@@ -25,7 +25,7 @@ import { plural } from "@/lib/utils/texto";
 export default function Repaso() {
   const [pestana, setPestana] = React.useState<"temas" | "keypoints">("temas");
   const temas = useStore((s) => s.temas);
-  const progresos = useStore((s) => s.progresos);
+  const progresos = useProgresos();
   const perfil = useStore((s) => s.perfil);
   const keypoints = useStore((s) => s.keypoints);
 

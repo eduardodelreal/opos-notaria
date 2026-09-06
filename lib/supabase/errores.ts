@@ -42,6 +42,12 @@ export function mensajeAuth(error: unknown): string {
   )
     return "Demasiados intentos seguidos. Espera un minuto y vuelve a probarlo.";
 
+  if (
+    codigo === "flow_state_not_found" ||
+    contiene("code verifier", "pkce", "flow state")
+  )
+    return "Ese enlace hay que abrirlo en el mismo navegador desde el que empezaste. Vuelve a intentarlo desde aquí.";
+
   if (codigo === "otp_expired" || contiene("expired", "invalid or has expired"))
     return "El enlace ha caducado o ya se había usado. Pide uno nuevo.";
 

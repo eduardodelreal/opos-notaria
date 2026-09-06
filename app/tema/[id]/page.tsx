@@ -18,7 +18,7 @@ import {
   Trash2,
   Wand2,
 } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useProgresos, useStore } from "@/lib/store/store";
 import {
   AreaTexto,
   Badge,
@@ -54,7 +54,7 @@ export default function FichaTema() {
 
   const tema = useStore((s) => s.temas.find((t) => t.id === id));
   const materias = useStore((s) => s.materias);
-  const progresos = useStore((s) => s.progresos);
+  const progresos = useProgresos();
   const perfil = useStore((s) => s.perfil);
   const cantes = useStore((s) => s.cantes);
   const keypoints = useStore((s) => s.keypoints);

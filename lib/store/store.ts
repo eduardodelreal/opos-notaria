@@ -2,15 +2,24 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import * as React from "react";
 import { idbStorage } from "./persist";
-import { MATERIAS } from "../data/materias";
-import { uid, slug } from "../utils/id";
+import { materiasIniciales } from "../data/materias";
+import { esUuid, uid } from "../utils/id";
 import { calcularProximoRepaso } from "../data/srs";
+import {
+  derivarProgresos,
+  notaMediaDeTema,
+  segundosDeTema,
+  vueltasDeTema,
+} from "../data/derivados";
+import { migrarAUuid, type ExpedienteV1 } from "./migraciones";
 import type {
   AnalisisCante,
   Cante,
   CanteEpigrafe,
   Epigrafe,
+  EpigrafeBorrado,
   EstadoTema,
   KeyPoint,
   Materia,
@@ -22,6 +31,7 @@ import type {
   Simulacro,
   Tema,
   TipoSesion,
+  Vuelta,
 } from "../data/types";
 
 const PERFIL_INICIAL: Perfil = {
@@ -50,12 +60,21 @@ interface Estado {
   perfil: Perfil;
   materias: Materia[];
   temas: Tema[];
+  /**
+   * Caché de contadores por tema. Lo que se pinta sale de `useProgresos()`,
+   * que recalcula `segundos`, `notaMedia` y `vueltas` desde las colecciones
+   * append-only. Ver lib/data/derivados.ts.
+   */
   progresos: Record<string, ProgresoTema>;
   sesiones: Sesion[];
   cantes: Cante[];
   keypoints: KeyPoint[];
   notas: Nota[];
   simulacros: Simulacro[];
+  /** Append-only: una fila por cada transición a "dominado". */
+  vueltas: Vuelta[];
+  /** Tumbas de epígrafes borrados, para que el borrado pueda viajar. */
+  epigrafesBorrados: EpigrafeBorrado[];
   chat: MensajeChat[];
   crono: CronoActivo | null;
 }
@@ -145,7 +164,7 @@ export type Store = Estado & Acciones;
 const ESTADO_INICIAL: Estado = {
   hidratado: false,
   perfil: PERFIL_INICIAL,
-  materias: MATERIAS,
+  materias: materiasIniciales(),
   temas: [],
   progresos: {},
   sesiones: [],
@@ -153,6 +172,8 @@ const ESTADO_INICIAL: Estado = {
   keypoints: [],
   notas: [],
   simulacros: [],
+  vueltas: [],
+  epigrafesBorrados: [],
   chat: [],
   crono: null,
 };
@@ -191,16 +212,18 @@ export const useStore = create<Store>()(
       /* ---------------- materias ---------------- */
 
       addMateria: (nombre, abrev, color) => {
-        const existentes = new Set(get().materias.map((m) => m.id));
-        let id = slug(nombre) || uid("mat");
-        while (existentes.has(id)) id = `${id}-${Math.floor(Math.random() * 90 + 10)}`;
+        const limpio = nombre.trim();
         const materia: Materia = {
-          id,
-          nombre: nombre.trim(),
-          abrev: abrev.trim().toUpperCase().slice(0, 4) || id.slice(0, 3).toUpperCase(),
+          id: uid(),
+          nombre: limpio,
+          abrev:
+            abrev.trim().toUpperCase().slice(0, 4) ||
+            limpio.toUpperCase().slice(0, 3),
           color,
           ejercicio: 1,
           descripcion: "",
+          // Va al final de la lista: es donde el usuario la ve aparecer.
+          orden: get().materias.reduce((max, m) => Math.max(max, m.orden), -1) + 1,
         };
         set((s) => ({ materias: [...s.materias, materia] }));
         return materia;
@@ -224,6 +247,7 @@ export const useStore = create<Store>()(
             cantes: s.cantes.filter((c) => !idsFuera.has(c.temaId)),
             keypoints: s.keypoints.filter((k) => !idsFuera.has(k.temaId)),
             notas: s.notas.filter((n) => !idsFuera.has(n.temaId)),
+            vueltas: s.vueltas.filter((v) => !idsFuera.has(v.temaId)),
           };
         }),
 
@@ -231,7 +255,7 @@ export const useStore = create<Store>()(
 
       addTema: (materiaId, numero, titulo) => {
         const tema: Tema = {
-          id: uid("tem"),
+          id: uid(),
           materiaId,
           numero,
           titulo: titulo.trim(),
@@ -252,7 +276,7 @@ export const useStore = create<Store>()(
           const titulo = f.titulo.trim();
           if (!titulo) continue;
           const tema: Tema = {
-            id: uid("tem"),
+            id: uid(),
             materiaId,
             numero: f.numero,
             titulo,
@@ -284,33 +308,81 @@ export const useStore = create<Store>()(
             cantes: s.cantes.filter((c) => c.temaId !== id),
             keypoints: s.keypoints.filter((k) => k.temaId !== id),
             notas: s.notas.filter((n) => n.temaId !== id),
+            vueltas: s.vueltas.filter((v) => v.temaId !== id),
           };
         }),
 
+      // El array de epígrafes es una comodidad de la UI; en el servidor cada
+      // epígrafe es una fila con su propio reloj. Por eso esto no sustituye
+      // el array a ciegas: compara con lo que había para distinguir qué se
+      // creó, qué cambió (y solo entonces avanza `actualizado`) y qué se
+      // borró, que es lo único que la sincronización sabrá convertir en
+      // altas, updates y tumbas.
       setEpigrafes: (temaId, epigrafes) =>
-        set((s) => ({
-          temas: s.temas.map((t) => (t.id === temaId ? { ...t, epigrafes } : t)),
-        })),
+        set((s) => {
+          const tema = s.temas.find((t) => t.id === temaId);
+          if (!tema) return {};
+          const ahora = Date.now();
+          const previos = new Map(tema.epigrafes.map((e) => [e.id, e]));
+
+          const siguientes: Epigrafe[] = epigrafes.map((e, i) => {
+            const orden = i + 1;
+            const previo = previos.get(e.id);
+            if (!previo) {
+              return { ...e, orden, creado: e.creado ?? ahora, actualizado: ahora };
+            }
+            const igual =
+              previo.titulo === e.titulo &&
+              previo.texto === e.texto &&
+              previo.orden === orden;
+            return {
+              ...previo,
+              ...e,
+              orden,
+              creado: previo.creado,
+              actualizado: igual ? previo.actualizado : ahora,
+            };
+          });
+
+          const vivos = new Set(siguientes.map((e) => e.id));
+          const tumbas = tema.epigrafes
+            .filter((e) => !vivos.has(e.id))
+            .map((e) => ({ id: e.id, temaId, borrado: ahora }));
+
+          return {
+            temas: s.temas.map((t) =>
+              t.id === temaId ? { ...t, epigrafes: siguientes } : t,
+            ),
+            epigrafesBorrados: tumbas.length
+              ? [...s.epigrafesBorrados, ...tumbas]
+              : s.epigrafesBorrados,
+          };
+        }),
 
       addEpigrafe: (temaId, titulo, texto) =>
-        set((s) => ({
-          temas: s.temas.map((t) =>
-            t.id === temaId
-              ? {
-                  ...t,
-                  epigrafes: [
-                    ...t.epigrafes,
-                    {
-                      id: uid("epi"),
-                      orden: t.epigrafes.length + 1,
-                      titulo: titulo.trim(),
-                      texto,
-                    },
-                  ],
-                }
-              : t,
-          ),
-        })),
+        set((s) => {
+          const ahora = Date.now();
+          return {
+            temas: s.temas.map((t) =>
+              t.id === temaId
+                ? {
+                    ...t,
+                    epigrafes: [
+                      ...t.epigrafes,
+                      {
+                        id: uid(),
+                        orden: t.epigrafes.length + 1,
+                        titulo: titulo.trim(),
+                        texto,
+                        creado: ahora,
+                        actualizado: ahora,
+                      },
+                    ],
+                  }
+                : t,
+            ),
+          };
+        }),
 
       updateEpigrafe: (temaId, epigrafeId, parcial) =>
         set((s) => ({
@@ -319,44 +391,75 @@ export const useStore = create<Store>()(
               ? {
                   ...t,
                   epigrafes: t.epigrafes.map((e) =>
-                    e.id === epigrafeId ? { ...e, ...parcial } : e,
+                    e.id === epigrafeId
+                      ? { ...e, ...parcial, actualizado: Date.now() }
+                      : e,
                   ),
                 }
               : t,
           ),
         })),
 
+      // Renumerar deja constancia: cada epígrafe que cambia de posición es
+      // una fila más que tendrá que subir, no solo la que desaparece.
       removeEpigrafe: (temaId, epigrafeId) =>
-        set((s) => ({
-          temas: s.temas.map((t) =>
-            t.id === temaId
-              ? {
-                  ...t,
-                  epigrafes: t.epigrafes
-                    .filter((e) => e.id !== epigrafeId)
-                    .map((e, i) => ({ ...e, orden: i + 1 })),
-                }
-              : t,
-          ),
-        })),
+        set((s) => {
+          const ahora = Date.now();
+          return {
+            temas: s.temas.map((t) =>
+              t.id === temaId
+                ? {
+                    ...t,
+                    epigrafes: t.epigrafes
+                      .filter((e) => e.id !== epigrafeId)
+                      .map((e, i) =>
+                        e.orden === i + 1
+                          ? e
+                          : { ...e, orden: i + 1, actualizado: ahora },
+                      ),
+                  }
+                : t,
+            ),
+            epigrafesBorrados: [
+              ...s.epigrafesBorrados,
+              { id: epigrafeId, temaId, borrado: ahora },
+            ],
+          };
+        }),
 
       /* ---------------- progreso ---------------- */
 
-      progresoDe: (temaId) => get().progresos[temaId] ?? progresoVacio(temaId),
+      // Devuelve el progreso ya derivado: nadie que pregunte por el progreso
+      // de un tema debería recibir los contadores en caché.
+      progresoDe: (temaId) => {
+        const s = get();
+        const previo = s.progresos[temaId] ?? progresoVacio(temaId);
+        return {
+          ...previo,
+          segundos: segundosDeTema(temaId, s.sesiones),
+          notaMedia: notaMediaDeTema(temaId, s.cantes),
+          vueltas: vueltasDeTema(temaId, s.vueltas),
+        };
+      },
 
       setEstado: (temaId, estado) =>
         set((s) => {
           const previo = s.progresos[temaId] ?? progresoVacio(temaId);
+          // Marcar un tema como dominado cierra vuelta. Se registra como
+          // hecho, no como incremento: un contador no se puede reconstruir
+          // si dos dispositivos cierran vuelta antes de sincronizar.
+          const cierra = estado === "dominado" && previo.estado !== "dominado";
           const siguiente = conSRS({
             ...previo,
             estado,
-            // Marcar un tema como dominado cierra vuelta.
-            vueltas:
-              estado === "dominado" && previo.estado !== "dominado"
-                ? previo.vueltas + 1
-                : previo.vueltas,
+            vueltas: previo.vueltas + (cierra ? 1 : 0),
           });
-          return { progresos: { ...s.progresos, [temaId]: siguiente } };
+          return {
+            progresos: { ...s.progresos, [temaId]: siguiente },
+            vueltas: cierra
+              ? [...s.vueltas, { id: uid(), temaId, fecha: Date.now() }]
+              : s.vueltas,
+          };
         }),
 
       setDificultad: (temaId, dificultad) =>
@@ -389,6 +492,7 @@ export const useStore = create<Store>()(
               ...s.progresos,
               [temaId]: conSRS({ ...previo, vueltas: previo.vueltas + 1 }),
             },
+            vueltas: [...s.vueltas, { id: uid(), temaId, fecha: Date.now() }],
           };
         }),
 
@@ -434,7 +538,7 @@ export const useStore = create<Store>()(
         if (segundos < 20) return null;
 
         const sesion: Sesion = {
-          id: uid("ses"),
+          id: uid(),
           temaId: c.temaId,
           tipo: c.tipo,
           inicio: c.desde - c.acumulado * 1000,
@@ -467,7 +571,7 @@ export const useStore = create<Store>()(
       guardarCante: (datos) => {
         const cante: Cante = {
           ...datos,
-          id: uid("can"),
+          id: uid(),
           fecha: datos.fecha ?? Date.now(),
         };
 
@@ -500,7 +604,7 @@ export const useStore = create<Store>()(
           });
 
           const sesion: Sesion = {
-            id: uid("ses"),
+            id: uid(),
             temaId: cante.temaId,
             tipo: "cante",
             inicio: cante.fecha - cante.segundos * 1000,
@@ -543,7 +647,7 @@ export const useStore = create<Store>()(
           keypoints: [
             ...s.keypoints,
             {
-              id: uid("kp"),
+              id: uid(),
               temaId,
               epigrafeId,
               anverso: anverso.trim(),
@@ -585,7 +689,7 @@ export const useStore = create<Store>()(
           notas: [
             ...s.notas,
             {
-              id: uid("not"),
+              id: uid(),
               temaId,
               epigrafeId,
               texto,
@@ -608,7 +712,7 @@ export const useStore = create<Store>()(
       /* ---------------- simulacros ---------------- */
 
       addSimulacro: (s0) => {
-        const simulacro: Simulacro = { ...s0, id: uid("sim") };
+        const simulacro: Simulacro = { ...s0, id: uid() };
         set((s) => ({ simulacros: [...s.simulacros, simulacro] }));
         return simulacro;
       },
@@ -626,7 +730,7 @@ export const useStore = create<Store>()(
       /* ---------------- chat ---------------- */
 
       addMensaje: (m) => {
-        const mensaje: MensajeChat = { ...m, id: uid("msg"), creado: Date.now() };
+        const mensaje: MensajeChat = { ...m, id: uid(), creado: Date.now() };
         set((s) => ({ chat: [...s.chat, mensaje] }));
         return mensaje;
       },
@@ -639,7 +743,7 @@ export const useStore = create<Store>()(
         const s = get();
         return JSON.stringify(
           {
-            version: 1,
+            version: 2,
             exportado: new Date().toISOString(),
             perfil: s.perfil,
             materias: s.materias,
@@ -650,6 +754,7 @@ export const useStore = create<Store>()(
             keypoints: s.keypoints,
             notas: s.notas,
             simulacros: s.simulacros,
+            vueltas: s.vueltas,
           },
           null,
           2,
@@ -658,13 +763,25 @@ export const useStore = create<Store>()(
 
       importar: (json) => {
         try {
-          const d = JSON.parse(json);
-          if (!d || typeof d !== "object" || !Array.isArray(d.temas)) {
+          const bruto = JSON.parse(json);
+          if (!bruto || typeof bruto !== "object" || !Array.isArray(bruto.temas)) {
             return { ok: false, error: "El archivo no tiene el formato esperado." };
           }
+          // Una copia exportada antes de la v2 trae ids que no son uuid.
+          // Pasa por la misma migración que el expediente de IndexedDB: si
+          // no, el import reintroduciría el problema que ella arregla. No
+          // basta con mirar `version`: un fichero editado a mano puede
+          // mentir, y los ids no.
+          const anticuado =
+            (bruto.version ?? 1) < 2 ||
+            bruto.temas.some((t: { id?: string }) => !esUuid(t?.id));
+          const d = anticuado ? migrarAUuid(bruto as ExpedienteV1).estado : bruto;
           set({
             perfil: { ...PERFIL_INICIAL, ...(d.perfil ?? {}) },
-            materias: Array.isArray(d.materias) && d.materias.length ? d.materias : MATERIAS,
+            materias:
+              Array.isArray(d.materias) && d.materias.length
+                ? d.materias
+                : materiasIniciales(),
             temas: d.temas ?? [],
             progresos: d.progresos ?? {},
             sesiones: d.sesiones ?? [],
@@ -672,6 +789,8 @@ export const useStore = create<Store>()(
             keypoints: d.keypoints ?? [],
             notas: d.notas ?? [],
             simulacros: d.simulacros ?? [],
+            vueltas: d.vueltas ?? [],
+            epigrafesBorrados: d.epigrafesBorrados ?? [],
           });
           return { ok: true };
         } catch (e) {
@@ -680,12 +799,27 @@ export const useStore = create<Store>()(
       },
 
       borrarTodo: () =>
-        set({ ...ESTADO_INICIAL, hidratado: true, materias: MATERIAS }),
+        set({ ...ESTADO_INICIAL, hidratado: true, materias: materiasIniciales() }),
     }),
     {
       name: "opos-notaria",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => idbStorage),
+      // v1 → v2: ids a uuid, referencias reescritas, `Materia.orden`,
+      // timestamps de los epígrafes y registros de vuelta. Ver
+      // lib/store/migraciones.ts, donde está el porqué de cada paso.
+      migrate: (guardado, version) => {
+        if (version >= 2) return guardado as Store;
+        const { estado, mapa } = migrarAUuid(guardado as ExpedienteV1);
+        // El mapa `idViejo → uuid` se guarda aparte y sin bloquear la
+        // migración: si algo sale mal, es lo único que permite reconstruir
+        // a mano un expediente reescrito.
+        void idbStorage.setItem(
+          "opos-notaria:mapa-uuid",
+          JSON.stringify({ fecha: Date.now(), mapa }),
+        );
+        return estado as unknown as Store;
+      },
       partialize: (s) => {
         const { hidratado, ...resto } = s as Estado;
         return resto as Estado;
@@ -701,11 +835,38 @@ export const useStore = create<Store>()(
 
 /** Selector con memoria estable para listas ordenadas de temas. */
 export function temasOrdenados(temas: Tema[], materias: Materia[]): Tema[] {
-  const orden = new Map(materias.map((m, i) => [m.id, i]));
+  // El orden lo manda `Materia.orden`, no la posición en el array: es lo
+  // único que sobrevive a un viaje por la tabla de materias.
+  const orden = new Map(materias.map((m) => [m.id, m.orden ?? 0]));
   return [...temas].sort((a, b) => {
     const oa = orden.get(a.materiaId) ?? 99;
     const ob = orden.get(b.materiaId) ?? 99;
     if (oa !== ob) return oa - ob;
     return a.numero - b.numero;
   });
+}
+
+/**
+ * Progresos con los contadores derivados de las colecciones append-only.
+ * Úsalo en lugar de `useStore((s) => s.progresos)` en todo lo que se pinte.
+ *
+ * Cada `useStore` devuelve una referencia estable del estado y el cálculo
+ * va en un `useMemo`: derivar dentro del selector crearía un objeto nuevo
+ * en cada render y con él el bucle infinito de siempre.
+ */
+export function useProgresos(): Record<string, ProgresoTema> {
+  const progresos = useStore((s) => s.progresos);
+  const sesiones = useStore((s) => s.sesiones);
+  const cantes = useStore((s) => s.cantes);
+  const vueltas = useStore((s) => s.vueltas);
+  return React.useMemo(
+    () => derivarProgresos(progresos, sesiones, cantes, vueltas),
+    [progresos, sesiones, cantes, vueltas],
+  );
+}
+
+/** Igual, pero fuera de React (contexto de IA, acciones puntuales). */
+export function progresosDerivados(): Record<string, ProgresoTema> {
+  const s = useStore.getState();
+  return derivarProgresos(s.progresos, s.sesiones, s.cantes, s.vueltas);
 }

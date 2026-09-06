@@ -168,11 +168,14 @@ function recortar(t: string, max: number): string {
 }
 
 export function aEpigrafes(parseados: EpigrafeParseado[]): Epigrafe[] {
+  const ahora = Date.now();
   return parseados.map((p, i) => ({
-    id: uid("epi"),
+    id: uid(),
     orden: i + 1,
     titulo: p.titulo,
     texto: p.texto || undefined,
+    creado: ahora,
+    actualizado: ahora,
   }));
 }
 

@@ -11,7 +11,8 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useProgresos, useStore } from "@/lib/store/store";
+import { materiasOrdenadas } from "@/lib/data/materias";
 import { Cabecera } from "@/components/Shell";
 import {
   AreaTexto,
@@ -72,7 +73,12 @@ export default function Simulacros() {
 /* ========================================================================== */
 
 function Bombo() {
-  const { temas, materias, progresos, cantes } = useStore();
+  const { temas, materias: materiasSinOrdenar, cantes } = useStore();
+  const progresos = useProgresos();
+  const materias = React.useMemo(
+    () => materiasOrdenadas(materiasSinOrdenar),
+    [materiasSinOrdenar],
+  );
   const addSimulacro = useStore((s) => s.addSimulacro);
   const updateSimulacro = useStore((s) => s.updateSimulacro);
 

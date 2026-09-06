@@ -37,6 +37,18 @@ create extension if not exists "pgcrypto";
 -- Si el cliente NO manda updated_at, el servidor pone su reloj. Es el camino
 -- preferible siempre que la escritura sea online, porque elimina la deriva de
 -- relojes entre dispositivos.
+--
+-- Ese reloj del servidor, eso sí, NUNCA puede hacer retroceder el updated_at de
+-- la fila. El cursor del pull incremental es "el updated_at máximo que me he
+-- bajado" (docs/sincronizacion.md §3.2): si una escritura deja la fila con un
+-- updated_at MENOR que el que otro dispositivo ya tiene como cursor, ese
+-- dispositivo no vuelve a ver la fila nunca. Y pasa de verdad, no es teórico:
+-- basta con que un móvil con el reloj adelantado haya insertado la fila con su
+-- marca, y que la siguiente edición la haga otro dispositivo online. De ahí el
+-- greatest(): en el caso normal (now() por delante) vale now() y no cambia
+-- nada; en el caso patológico garantiza que la marca avanza igualmente. El
+-- milisegundo extra es para que avance ESTRICTAMENTE, porque el cursor del
+-- cliente compara con > y una marca repetida no se bajaría.
 create or replace function public.tocar_updated_at()
 returns trigger
 language plpgsql
@@ -52,7 +64,7 @@ begin
     return new;
   end if;
 
-  new.updated_at := now();
+  new.updated_at := greatest(now(), old.updated_at + interval '1 millisecond');
   return new;
 end;
 $fn$;

@@ -12,7 +12,7 @@ import {
   TriangleAlert,
   LayoutGrid,
 } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useProgresos, useStore } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
   Badge,
@@ -38,7 +38,8 @@ import { fecha, haceTexto, horas, horasMin, inicioSemana } from "@/lib/utils/tim
 import { plural } from "@/lib/utils/texto";
 
 export default function Panel() {
-  const { perfil, temas, progresos, sesiones, cantes, materias } = useStore();
+  const { perfil, temas, sesiones, cantes, materias } = useStore();
+  const progresos = useProgresos();
   const iniciarCrono = useStore((s) => s.iniciarCrono);
   const crono = useStore((s) => s.crono);
 

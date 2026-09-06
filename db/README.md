@@ -66,6 +66,39 @@ select tablename, policyname, cmd from pg_policies
 where schemaname = 'public' and cmd = 'DELETE';   -- 0 filas
 ```
 
+## Probar en local, sin Supabase
+
+Las migraciones se pueden aplicar y ejercitar contra un PostgreSQL corriente:
+
+```bash
+./db/pruebas/ejecutar.sh
+```
+
+Recrea una base local desechable, monta el andamiaje mínimo que en Supabase ya
+viene de fábrica (esquema `auth`, esquema `storage`, roles `anon`/
+`authenticated`/`service_role`), aplica las migraciones dos veces —así se
+comprueba la idempotencia— y corre una batería que verifica el
+**comportamiento**, no solo que el SQL pase: aislamiento real entre dos usuarios,
+arbitraje last-write-wins, cascada del borrado lógico, imposibilidad del
+`DELETE` y uso efectivo de los índices de pull. Detalles en
+[`pruebas/README.md`](pruebas/README.md).
+
+`db/pruebas/` **no** es una migración y nunca debe aplicarse a un proyecto de
+Supabase.
+
+## Límites conocidos
+
+- **Las claves ajenas no ven la RLS.** Un usuario puede insertar una fila SUYA
+  (`epigrafes`, `keypoints`, `notas`, `cantes`...) apuntando con `tema_id` al
+  uuid de un tema de otro usuario: la FK valida sin RLS y el `with check` solo
+  mira `usuario_id`. No expone ningún dato ajeno (no puede leer ese tema, ni
+  aparece nada en el pull del otro) y hay que conocer un uuid v4 para intentarlo,
+  pero deja basura enlazada. Si algún día molesta, se cierra con un trigger que
+  compruebe que el padre es del mismo `usuario_id`.
+- `file_size_limit` y `allowed_mime_types` del bucket los aplica el servicio de
+  Storage, no la base de datos: una escritura directa en `storage.objects` no
+  los respeta.
+
 ## Convenciones
 
 - Nombres de tablas y columnas en español (`progreso_temas`, `con_preparador`),

@@ -5,6 +5,16 @@
  * horas se agregan hacia arriba. Eso es lo que permite decirle al
  * opositor "siempre fallas el epígrafe 3 del tema 47" en vez de
  * "el tema 47 se te da mal".
+ *
+ * Convenios que impone la sincronización (docs/sincronizacion.md):
+ *
+ *   · Los ids son uuid v4 generados en el cliente (lib/utils/id.ts).
+ *   · `creado` y `actualizado` son los equivalentes locales de las columnas
+ *     `creado_at` y `updated_at` del esquema. `actualizado` es el reloj del
+ *     last-write-wins: se toca en cada edición y no se duplica con ningún
+ *     otro campo que diga lo mismo.
+ *   · Lo que se puede derivar de una colección append-only NO es un dato,
+ *     es caché. Ver lib/data/derivados.ts.
  */
 
 export type EstadoTema =
@@ -76,6 +86,12 @@ export interface Materia {
   /** Ejercicio de la oposición en el que entra esta materia. */
   ejercicio: 1 | 2 | 3 | 4;
   descripcion: string;
+  /**
+   * Posición en la barra lateral y en el mural. Es un campo y no la posición
+   * en el array porque un array no sobrevive a una tabla: sin esto el orden
+   * de las materias bailaría entre dispositivos.
+   */
+  orden: number;
 }
 
 export interface Epigrafe {
@@ -84,6 +100,21 @@ export interface Epigrafe {
   titulo: string;
   /** Texto del epígrafe tal y como lo estudia el opositor. */
   texto?: string;
+  creado: number;
+  /** Reloj del last-write-wins (`updated_at`). Lo toca cualquier edición. */
+  actualizado: number;
+}
+
+/**
+ * Epígrafe borrado en local. Es una tumba, no un dato: los epígrafes son
+ * filas propias en el servidor, así que borrar uno tiene que poder viajar.
+ * Si solo lo quitáramos del array, el otro dispositivo no se enteraría nunca
+ * (no hay fila que bajar) y lo resucitaría en el siguiente pull.
+ */
+export interface EpigrafeBorrado {
+  id: string;
+  temaId: string;
+  borrado: number;
 }
 
 export interface Tema {
@@ -117,20 +148,44 @@ export interface Nota {
   epigrafeId?: string;
   texto: string;
   creado: number;
+  /** Reloj del last-write-wins (`updated_at`), igual que en Epigrafe. */
   actualizado: number;
+}
+
+/**
+ * Transición de un tema a "dominado". Colección append-only: es la fuente
+ * de la que sale `ProgresoTema.vueltas`.
+ *
+ * Existe porque un contador no se puede reconstruir tras un conflicto: si
+ * cierras vuelta de un tema en el portátil y otra en el móvil sin
+ * sincronizar entre medias, el last-write-wins se queda con el contador de
+ * uno de los dos y la otra vuelta desaparece sin dejar rastro. Con un
+ * registro por vuelta la cuenta se recompone sumando filas, que es lo que
+ * el append-only sí sabe hacer.
+ */
+export interface Vuelta {
+  id: string;
+  temaId: string;
+  fecha: number;
 }
 
 export interface ProgresoTema {
   temaId: string;
   estado: EstadoTema;
-  /** Segundos efectivos acumulados (estudio + repaso + cante). */
+  /**
+   * CACHÉ. Segundos efectivos acumulados (estudio + repaso + cante).
+   * La verdad está en `sesiones`, que es append-only y por tanto no tiene
+   * conflicto; este campo solo evita agregar en cada render. Para leerlo
+   * usa lib/data/derivados.ts, nunca el valor crudo.
+   */
   segundos: number;
   /** Dificultad percibida 1-5. Alimenta el intervalo de repaso. */
   dificultad: number;
+  /** CACHÉ. Número de registros en `vueltas` de este tema. */
   vueltas: number;
   ultimoEstudio?: number;
   ultimoCante?: number;
-  /** Media móvil de las notas de cante (0-10). */
+  /** CACHÉ. Media de las notas de cante (0-10). La verdad está en `cantes`. */
   notaMedia?: number;
   /** Calculado por el SRS: cuándo toca repasarlo. */
   proximoRepaso?: number;

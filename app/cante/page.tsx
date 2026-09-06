@@ -4,7 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mic, Search, Shuffle } from "lucide-react";
-import { useStore, temasOrdenados } from "@/lib/store/store";
+import { useProgresos, useStore, temasOrdenados } from "@/lib/store/store";
+import { materiasOrdenadas } from "@/lib/data/materias";
 import { Cabecera } from "@/components/Shell";
 import { Badge, Boton, Card, Punto, TituloSeccion, Vacio, cx } from "@/components/ui";
 import { ESTADOS } from "@/lib/data/types";
@@ -14,7 +15,12 @@ import { plural } from "@/lib/utils/texto";
 
 export default function ElegirCante() {
   const router = useRouter();
-  const { temas, materias, progresos, perfil, cantes } = useStore();
+  const { temas, materias: materiasSinOrdenar, perfil, cantes } = useStore();
+  const progresos = useProgresos();
+  const materias = React.useMemo(
+    () => materiasOrdenadas(materiasSinOrdenar),
+    [materiasSinOrdenar],
+  );
   const [busqueda, setBusqueda] = React.useState("");
   const [materiaId, setMateriaId] = React.useState("todas");
 

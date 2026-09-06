@@ -10,7 +10,7 @@ import {
   Sparkles,
   Square,
 } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useProgresos, useStore } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import { Boton, Card, TituloSeccion, Vacio, cx } from "@/components/ui";
 import { useFicha, useIA, rutaIA } from "@/lib/ai/hooks";
@@ -47,7 +47,7 @@ export default function Chat() {
   const chat = useStore((s) => s.chat);
   const perfil = useStore((s) => s.perfil);
   const temas = useStore((s) => s.temas);
-  const progresos = useStore((s) => s.progresos);
+  const progresos = useProgresos();
   const sesiones = useStore((s) => s.sesiones);
   const cantes = useStore((s) => s.cantes);
   const addMensaje = useStore((s) => s.addMensaje);

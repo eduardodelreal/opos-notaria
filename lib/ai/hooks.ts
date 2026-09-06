@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useStore } from "../store/store";
+import { progresosDerivados, useStore } from "../store/store";
 import { construirFicha } from "./contexto";
 
 /**
@@ -57,7 +57,8 @@ export function useFicha() {
       perfil: s.perfil,
       materias: s.materias,
       temas: s.temas,
-      progresos: s.progresos,
+      // Derivados: la ficha que lee el modelo dice las horas reales.
+      progresos: progresosDerivados(),
       sesiones: s.sesiones,
       cantes: s.cantes,
     });

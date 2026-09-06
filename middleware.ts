@@ -60,8 +60,9 @@ export const config = {
     /*
      * Todas las rutas de página, menos:
      * - las rutas de API (se autentican solas con `usuarioDePeticion`),
+     * - `/auth/*`, que canjea el código y escribe las cookies por su cuenta,
      * - los estáticos de Next y los archivos con extensión.
      */
-    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt|xml|woff|woff2)$).*)",
+    "/((?!api/|auth/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt|xml|woff|woff2)$).*)",
   ],
 };
