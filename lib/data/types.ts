@@ -421,6 +421,48 @@ export interface MensajeChat {
   contexto?: string;
 }
 
+/* --------------------------- apariencia y hábitos -------------------------- */
+
+/**
+ * Tono base de la interfaz. Es el viejo `tema` ampliado: `sepia` es papel
+ * cálido, que es lo que pide medio mundo para leer temas durante horas y lo
+ * que ni el oscuro ni el blanco puro dan.
+ *
+ * Los valores `dark` y `light` NO se renombran a español aunque el resto
+ * del modelo lo esté: son los que ya están escritos en `perfiles.tema` de
+ * todas las cuentas y en el `localStorage` de todos los navegadores, y
+ * renombrarlos obligaría a migrar dos sitios para no ganar nada.
+ */
+export type Tono = "dark" | "light" | "sepia";
+
+/**
+ * Acento de marca. Es el color del lacre notarial (botón primario, bordes
+ * activos, gráficas): el latón dorado NO se toca, porque es la segunda nota
+ * de la casa y lo que hace que la app siga siendo la misma app con
+ * cualquier acento.
+ *
+ * Se ofrece una paleta con nombre y no un selector de color a pelo porque
+ * el opositor no es diseñador: cada acento con nombre está medido contra
+ * los tres fondos. `personal` abre el color libre, y ese sí pasa por la
+ * corrección automática de contraste (lib/data/apariencia.ts).
+ */
+export type Acento = "lacre" | "tinta" | "jade" | "cardeno" | "cobre" | "personal";
+
+/** Tipografía del TEXTO DE LOS TEMAS. La interfaz siempre va en la sans. */
+export type FuenteTemas = "serif" | "sans";
+
+/** Densidad de la interfaz. `compacta` encoge la retícula, no la letra. */
+export type Densidad = "normal" | "compacta";
+
+/**
+ * Criterio con el que se listan los temas en todas las vistas.
+ * `numero` es el de siempre: materia y número, como el programa impreso.
+ */
+export type OrdenTemas = "numero" | "estado" | "urgencia" | "tiempo" | "nota";
+
+/** Vista con la que abre el programa. */
+export type VistaPrograma = "mural" | "lista";
+
 export interface Perfil {
   nombre: string;
   oposicion: "notarias" | "registros" | "judicatura";
@@ -433,7 +475,27 @@ export interface Perfil {
   minutosPorTema: number;
   /** Días sin tocar un tema dominado antes de marcarlo oxidado. */
   diasOxido: number;
-  tema: "dark" | "light";
+  tema: Tono;
   /** Estilo del feedback de la IA. Se inyecta en el system prompt. */
   estiloFeedback: "directo" | "equilibrado" | "amable";
+
+  /* --- apariencia ---
+     Viaja con el perfil, como todo lo demás: el opositor configura una vez
+     y se lo encuentra igual en el portátil de casa y en el de la
+     biblioteca. Los valores por defecto reproducen EXACTAMENTE la app tal
+     y como era antes de que esto existiera. */
+
+  /** Acento de marca. `lacre` es el de la casa. */
+  acento: Acento;
+  /** Color libre en `#rrggbb`. Solo cuenta con `acento === "personal"`. */
+  acentoPersonal?: string;
+  fuenteTemas: FuenteTemas;
+  /** Cuerpo del texto de los temas, en píxeles. 17 = el de siempre. */
+  tamanoTema: number;
+  densidad: Densidad;
+
+  /* --- comportamiento --- */
+
+  ordenTemas: OrdenTemas;
+  vistaPrograma: VistaPrograma;
 }

@@ -11,7 +11,8 @@ import type { EstadoIA } from "@/lib/ai/hooks";
    Dos motivos posibles, y conviene distinguirlos porque se arreglan de
    forma distinta:
 
-     1. Falta `ANTHROPIC_API_KEY` en el servidor  → lo arregla quien
+     1. No hay clave de IA en el servidor (ni `ANTHROPIC_API_KEY` ni
+        `OPENAI_API_KEY`)                          → lo arregla quien
         despliega.
      2. Hace falta iniciar sesión                 → lo arregla el opositor,
         y le basta un clic.
@@ -79,7 +80,8 @@ export function AvisoIA({
         <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
           Copia <code className="text-[var(--laton)]">.env.example</code> a{" "}
           <code className="text-[var(--laton)]">.env.local</code>, pon tu{" "}
-          <code className="text-[var(--laton)]">ANTHROPIC_API_KEY</code> y reinicia el
+          <code className="text-[var(--laton)]">ANTHROPIC_API_KEY</code> o tu{" "}
+          <code className="text-[var(--laton)]">OPENAI_API_KEY</code> y reinicia el
           servidor. El resto de la app funciona igual sin clave.
         </p>
       </div>
@@ -107,7 +109,7 @@ export function NotaIA({ ia, className = "" }: { ia: EstadoIA; className?: strin
           .
         </>
       ) : (
-        <>Configura ANTHROPIC_API_KEY en el servidor para activar esto.</>
+        <>Configura ANTHROPIC_API_KEY u OPENAI_API_KEY en el servidor para activar esto.</>
       )}
     </span>
   );

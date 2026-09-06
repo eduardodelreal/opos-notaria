@@ -1,12 +1,5 @@
-import {
-  MODELO,
-  errorApi,
-  esRechazo,
-  getCliente,
-  hayClave,
-  sinClave,
-  textoDe,
-} from "@/lib/ai/client";
+import { errorApi, proveedorActivo, rechazo, sinClave } from "@/lib/ai/proveedor";
+import type { EsquemaSalida } from "@/lib/ai/proveedores/tipos";
 import { sistemaAnalisis } from "@/lib/ai/prompts";
 import { responderPreflight } from "@/lib/ai/cors";
 import { protegida } from "@/lib/ai/guardia";
@@ -20,8 +13,8 @@ export const maxDuration = 120;
  * Devuelve JSON con forma fija (structured outputs) para poder pintarlo
  * como tarjeta en la ficha del tema y guardarlo junto al cante.
  */
-const ESQUEMA = {
-  type: "json_schema" as const,
+const ESQUEMA: EsquemaSalida = {
+  nombre: "analisis_cante",
   schema: {
     type: "object",
     additionalProperties: false,
@@ -76,7 +69,8 @@ const ESQUEMA = {
 };
 
 async function manejar(req: Request) {
-  if (!hayClave()) return sinClave();
+  const ia = proveedorActivo();
+  if (!ia.ok) return sinClave(ia);
 
   try {
     const body = (await req.json()) as {
@@ -92,36 +86,22 @@ async function manejar(req: Request) {
       );
     }
 
-    const respuesta = await getCliente().messages.create({
-      model: MODELO,
-      max_tokens: 8000,
-      system: [
+    const respuesta = await ia.proveedor.estructurada({
+      sistema: sistemaAnalisis(body.estilo ?? "directo"),
+      esquema: ESQUEMA,
+      maxTokens: 8000,
+      mensajes: [
         {
-          type: "text",
-          text: sistemaAnalisis(body.estilo ?? "directo"),
-          cache_control: { type: "ephemeral" },
+          rol: "user",
+          texto: `${body.ficha}\n\n---\n\n${body.detalleCante}\n\n---\n\nAnaliza este cante.`,
         },
       ],
-      output_config: { format: ESQUEMA },
-      messages: [
-        {
-          role: "user",
-          content: `${body.ficha}\n\n---\n\n${body.detalleCante}\n\n---\n\nAnaliza este cante.`,
-        },
-      ],
-    }, { signal: req.signal });
+      senal: req.signal,
+    });
 
-    if (esRechazo(respuesta)) {
-      return Response.json(
-        {
-          error: "rechazo",
-          mensaje: "El modelo no ha podido procesar esta petición.",
-        },
-        { status: 422 },
-      );
-    }
+    if (respuesta.rechazado) return rechazo();
 
-    const texto = textoDe(respuesta);
+    const texto = respuesta.texto;
     let analisis: unknown;
     try {
       analisis = JSON.parse(texto);
@@ -132,7 +112,7 @@ async function manejar(req: Request) {
       );
     }
 
-    return Response.json({ analisis, modelo: MODELO });
+    return Response.json({ analisis, modelo: ia.modelo });
   } catch (e) {
     return errorApi(e);
   }

@@ -65,7 +65,7 @@ export async function usuarioDePeticion(
 
 /**
  * Respuesta uniforme para una ruta que exige sesión y no la tiene.
- * Mismo formato que `sinClave()` en `lib/ai/client.ts`.
+ * Mismo formato que `sinClave()` en `lib/ai/proveedor.ts`.
  */
 export function noAutorizado() {
   return Response.json(

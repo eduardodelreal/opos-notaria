@@ -1,4 +1,4 @@
-import { MODELO, hayClave } from "@/lib/ai/client";
+import { hayClave, modeloActivo, proveedorConfigurado } from "@/lib/ai/proveedor";
 import { conCors, responderPreflight } from "@/lib/ai/cors";
 import { hayTranscripcion, motorTranscripcion } from "@/lib/ai/transcripcion";
 import { haySupabase } from "@/lib/supabase/config";
@@ -22,6 +22,10 @@ export const runtime = "nodejs";
  *   · `railway.json` la usa de healthcheck, y un healthcheck no tiene
  *     credenciales.
  *
+ * `proveedor` dice quién atiende ("anthropic" u "openai", "" si nadie):
+ * la interfaz lo enseña para que el opositor sepa a qué modelo le está
+ * hablando, y para que un despliegue mal configurado se vea de un vistazo.
+ *
  * Devuelve dos campos nuevos:
  *   · `requiereSesion`: este servidor tiene Supabase, así que el resto de
  *     rutas exigen sesión. Lo decide el servidor que ATIENDE la IA, que
@@ -44,7 +48,8 @@ export async function GET(req: Request) {
   return conCors(
     Response.json({
       disponible: hayClave(),
-      modelo: MODELO,
+      proveedor: proveedorConfigurado(),
+      modelo: modeloActivo(),
       transcripcion: hayTranscripcion(),
       motorTranscripcion: hayTranscripcion() ? motorTranscripcion() : "",
       requiereSesion,

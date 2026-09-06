@@ -1,12 +1,5 @@
-import {
-  MODELO,
-  errorApi,
-  esRechazo,
-  getCliente,
-  hayClave,
-  sinClave,
-  textoDe,
-} from "@/lib/ai/client";
+import { errorApi, proveedorActivo, rechazo, sinClave } from "@/lib/ai/proveedor";
+import type { EsquemaSalida } from "@/lib/ai/proveedores/tipos";
 import { sistemaKeyPoints } from "@/lib/ai/prompts";
 import { responderPreflight } from "@/lib/ai/cors";
 import { protegida } from "@/lib/ai/guardia";
@@ -14,8 +7,8 @@ import { protegida } from "@/lib/ai/guardia";
 export const runtime = "nodejs";
 export const maxDuration = 180;
 
-const ESQUEMA = {
-  type: "json_schema" as const,
+const ESQUEMA: EsquemaSalida = {
+  nombre: "keypoints",
   schema: {
     type: "object",
     additionalProperties: false,
@@ -39,7 +32,8 @@ const ESQUEMA = {
 
 /** Extrae puntos clave memorizables del texto que pega el opositor. */
 async function manejar(req: Request) {
-  if (!hayClave()) return sinClave();
+  const ia = proveedorActivo();
+  if (!ia.ok) return sinClave(ia);
 
   try {
     const body = (await req.json()) as {
@@ -58,36 +52,25 @@ async function manejar(req: Request) {
       );
     }
 
-    const respuesta = await getCliente().messages.create({
-      model: MODELO,
-      max_tokens: 8000,
-      system: [
+    const respuesta = await ia.proveedor.estructurada({
+      sistema: sistemaKeyPoints(),
+      esquema: ESQUEMA,
+      maxTokens: 8000,
+      mensajes: [
         {
-          type: "text",
-          text: sistemaKeyPoints(),
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      output_config: { format: ESQUEMA },
-      messages: [
-        {
-          role: "user",
-          content: `${body.tema ? `Tema: ${body.tema}\n` : ""}${
+          rol: "user",
+          texto: `${body.tema ? `Tema: ${body.tema}\n` : ""}${
             body.epigrafe ? `Epígrafe: ${body.epigrafe}\n` : ""
           }\nTexto:\n\n${body.texto}\n\n---\n\nExtrae los puntos clave.`,
         },
       ],
-    }, { signal: req.signal });
+      senal: req.signal,
+    });
 
-    if (esRechazo(respuesta)) {
-      return Response.json(
-        { error: "rechazo", mensaje: "El modelo no ha podido responder." },
-        { status: 422 },
-      );
-    }
+    if (respuesta.rechazado) return rechazo();
 
     try {
-      const datos = JSON.parse(textoDe(respuesta)) as {
+      const datos = JSON.parse(respuesta.texto) as {
         keypoints: { anverso: string; reverso: string }[];
       };
       return Response.json({ keypoints: datos.keypoints ?? [] });

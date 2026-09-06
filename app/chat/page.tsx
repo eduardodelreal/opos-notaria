@@ -248,7 +248,7 @@ export default function Chat() {
                   ? "Pregunta lo que quieras sobre tu preparación…"
                   : ia.bloqueado
                     ? "Inicia sesión para escribir al preparador"
-                    : "Configura ANTHROPIC_API_KEY para escribir"
+                    : "Configura una clave de IA para escribir"
               }
               className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[12px] px-4 py-3 text-[14px] resize-none outline-none focus:border-[var(--border-strong)] transition-colors max-h-40 disabled:opacity-50"
               style={{ minHeight: 46 }}

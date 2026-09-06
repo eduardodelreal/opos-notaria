@@ -14,30 +14,77 @@ import "server-only";
    como si fuera un `document` no funciona: la petición se rechaza.
 
    Así que la transcripción sale de un servicio aparte y la comparación
-   —que es texto contra texto— sí la hace Claude, que es donde aporta.
+   —que es texto contra texto— sí la hace el modelo, que es donde aporta.
 
-   El proveedor se configura con tres variables y habla el dialecto
-   `POST /audio/transcriptions` de OpenAI, que es el que implementan también
-   Groq, Deepgram (modo compatible), faster-whisper y whisper.cpp servidos
-   en local:
+   Con OpenAI la foto cambia a medias: OpenAI SÍ tiene transcripción, pero
+   en OTRO endpoint (`/audio/transcriptions`), no en la Responses API que
+   usa el adaptador de texto. Es decir, el reparto sigue siendo el mismo;
+   lo único que cambia es que, si el opositor ya tiene clave de OpenAI, no
+   necesita una segunda para el audio.
 
-     TRANSCRIPCION_API_KEY   sin ella, la función se apaga y se dice
+   El proveedor habla el dialecto `POST /audio/transcriptions` de OpenAI,
+   que es el que implementan también Groq, Deepgram (modo compatible),
+   faster-whisper y whisper.cpp servidos en local:
+
+     TRANSCRIPCION_API_KEY   opcional (ver abajo)
      TRANSCRIPCION_URL       por defecto https://api.openai.com/v1
      TRANSCRIPCION_MODELO    por defecto whisper-1
 
-   Sin la clave la app funciona EXACTAMENTE igual que hoy: se graba, se
-   guarda y se reproduce; solo no hay transcripción ni comparación, y la
-   interfaz lo dice en vez de fingir que se está procesando.
+   DE DÓNDE SALE LA CLAVE
+   ----------------------
+   Desde que la app puede hablar con OpenAI para el texto (lib/ai/proveedor.ts),
+   pedir DOS claves de la misma casa para lo mismo era una tontería. Así que:
+
+     1. Si hay `TRANSCRIPCION_API_KEY`, se usa esa y nada más. Manda ella.
+     2. Si no la hay pero sí `OPENAI_API_KEY`, se usa la de OpenAI contra
+        Whisper. El opositor configura una sola clave y le funciona todo.
+
+   Con un matiz que importa: la clave heredada SOLO se manda si NO se ha
+   puesto `TRANSCRIPCION_URL`. Si el opositor apunta la transcripción a
+   Groq, a un whisper.cpp de su casa o a cualquier otro sitio, ahí no se
+   manda su clave de OpenAI: una credencial solo viaja al servicio que la
+   emitió. Para ese caso hay que poner `TRANSCRIPCION_API_KEY` (o dejarla
+   vacía, si el servidor local no pide ninguna... entonces la función se
+   apaga; es el precio de no filtrar claves por descuido).
+
+   Sin ninguna de las dos la app funciona EXACTAMENTE igual que hoy: se
+   graba, se guarda y se reproduce; solo no hay transcripción ni
+   comparación, y la interfaz lo dice en vez de fingir que procesa.
    ============================================================ */
 
 /** 25 MB es el tope de la API de Whisper; dejamos margen para el multipart. */
 export const MAX_BYTES = 24 * 1024 * 1024;
 
-export function urlTranscripcion(): string {
-  return (process.env.TRANSCRIPCION_URL || "https://api.openai.com/v1").replace(
-    /\/+$/,
-    "",
+/**
+ * La clave con la que se llama al servicio de audio, o `undefined` si no
+ * hay ninguna utilizable. Ver la nota de arriba sobre por qué la clave
+ * heredada de OpenAI no sale de api.openai.com.
+ */
+export function claveTranscripcion(): string | undefined {
+  const propia = process.env.TRANSCRIPCION_API_KEY?.trim();
+  if (propia) return propia;
+  if (process.env.TRANSCRIPCION_URL?.trim()) return undefined;
+  return process.env.OPENAI_API_KEY?.trim() || undefined;
+}
+
+/** ¿Se está usando la clave del proveedor de texto en vez de una propia? */
+export function claveHeredadaDeOpenAI(): boolean {
+  return (
+    !process.env.TRANSCRIPCION_API_KEY?.trim() &&
+    !process.env.TRANSCRIPCION_URL?.trim() &&
+    Boolean(process.env.OPENAI_API_KEY?.trim())
   );
+}
+
+export function urlTranscripcion(): string {
+  const propia = process.env.TRANSCRIPCION_URL?.trim();
+  if (propia) return propia.replace(/\/+$/, "");
+  // Con la clave heredada, el destino es el mismo servicio que la emitió:
+  // así `OPENAI_BASE_URL` (Azure, una pasarela propia) también vale aquí.
+  const base = claveHeredadaDeOpenAI()
+    ? process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1"
+    : "https://api.openai.com/v1";
+  return base.replace(/\/+$/, "");
 }
 
 export function modeloTranscripcion(): string {
@@ -45,7 +92,7 @@ export function modeloTranscripcion(): string {
 }
 
 export function hayTranscripcion(): boolean {
-  return Boolean(process.env.TRANSCRIPCION_API_KEY);
+  return Boolean(claveTranscripcion());
 }
 
 /** Lo que se guarda junto al cante para saber de dónde salió el texto. */
@@ -63,10 +110,12 @@ export function sinTranscripcion(): Response {
     {
       error: "sin_transcripcion",
       mensaje:
-        "No hay servicio de transcripción configurado. La API de Anthropic no acepta audio, " +
-        "así que la transcripción necesita un proveedor compatible con Whisper: pon " +
-        "TRANSCRIPCION_API_KEY (y, si no usas OpenAI, TRANSCRIPCION_URL y TRANSCRIPCION_MODELO) " +
-        "en .env.local y reinicia. Grabar y reproducir el cante funciona sin esto.",
+        "No hay servicio de transcripción configurado. Ni Anthropic ni la Responses API " +
+        "de OpenAI aceptan audio por esta vía, así que la transcripción necesita un " +
+        "proveedor compatible con Whisper. Si usas OpenAI para el texto, con OPENAI_API_KEY " +
+        "ya vale; si no, pon TRANSCRIPCION_API_KEY (y TRANSCRIPCION_URL y " +
+        "TRANSCRIPCION_MODELO si apuntas a otro sitio) en .env.local y reinicia. " +
+        "Grabar y reproducir el cante funciona sin esto.",
     },
     { status: 503 },
   );
@@ -99,7 +148,7 @@ export async function transcribir(
 
   const r = await fetch(`${urlTranscripcion()}/audio/transcriptions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${process.env.TRANSCRIPCION_API_KEY}` },
+    headers: { Authorization: `Bearer ${claveTranscripcion() ?? ""}` },
     body: cuerpo,
     signal: opciones.senal,
   });

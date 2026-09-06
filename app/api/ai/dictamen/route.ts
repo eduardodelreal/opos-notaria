@@ -1,12 +1,4 @@
-import {
-  MODELO,
-  errorApi,
-  esRechazo,
-  getCliente,
-  hayClave,
-  sinClave,
-  textoDe,
-} from "@/lib/ai/client";
+import { errorApi, proveedorActivo, rechazo, sinClave } from "@/lib/ai/proveedor";
 import { sistemaDictamen } from "@/lib/ai/prompts";
 import { responderPreflight } from "@/lib/ai/cors";
 import { protegida } from "@/lib/ai/guardia";
@@ -21,7 +13,8 @@ export const maxDuration = 300;
  * - `corregir`: corrige la respuesta del opositor con la rúbrica del ejercicio.
  */
 async function manejar(req: Request) {
-  if (!hayClave()) return sinClave();
+  const ia = proveedorActivo();
+  if (!ia.ok) return sinClave(ia);
 
   try {
     const body = (await req.json()) as {
@@ -50,27 +43,16 @@ async function manejar(req: Request) {
       );
     }
 
-    const respuesta = await getCliente().messages.create({
-      model: MODELO,
-      max_tokens: 16000,
-      system: [
-        {
-          type: "text",
-          text: sistemaDictamen(body.estilo ?? "directo"),
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [{ role: "user", content: contenido }],
-    }, { signal: req.signal });
+    const respuesta = await ia.proveedor.texto({
+      sistema: sistemaDictamen(body.estilo ?? "directo"),
+      maxTokens: 16000,
+      mensajes: [{ rol: "user", texto: contenido }],
+      senal: req.signal,
+    });
 
-    if (esRechazo(respuesta)) {
-      return Response.json(
-        { error: "rechazo", mensaje: "El modelo no ha podido responder." },
-        { status: 422 },
-      );
-    }
+    if (respuesta.rechazado) return rechazo();
 
-    return Response.json({ texto: textoDe(respuesta), modelo: MODELO });
+    return Response.json({ texto: respuesta.texto, modelo: ia.modelo });
   } catch (e) {
     return errorApi(e);
   }

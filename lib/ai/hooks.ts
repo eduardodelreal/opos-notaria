@@ -71,13 +71,16 @@ export async function pedirIA(
 
 export interface EstadoIA {
   cargando: boolean;
-  /** ¿Hay ANTHROPIC_API_KEY en el servidor? */
+  /** ¿Hay clave de IA en el servidor (la de Anthropic o la de OpenAI)? */
   disponible: boolean;
+  /** Quién atiende: "anthropic", "openai" o "" si no hay nadie. */
+  proveedor: string;
   modelo: string;
   /**
-   * ¿Hay servicio de transcripción? Es OTRO proveedor: la API de Anthropic
-   * no acepta audio (lib/ai/transcripcion.ts), así que se configura aparte
-   * y puede faltar aunque el resto de la IA funcione.
+   * ¿Hay servicio de transcripción? Es OTRO endpoint, y puede ser otro
+   * proveedor: el adaptador de texto no acepta audio
+   * (lib/ai/transcripcion.ts). Con clave de OpenAI se hereda para Whisper,
+   * pero con Anthropic hay que configurarlo aparte.
    */
   transcripcion: boolean;
   motorTranscripcion: string;
@@ -95,7 +98,7 @@ export interface EstadoIA {
    */
   bloqueado: boolean;
   /**
-   * Se puede pulsar: hay clave de Anthropic y, si hace falta, sesión.
+   * Se puede pulsar: hay clave de IA y, si hace falta, sesión.
    * Sustituye a `disponible` en los `disabled` de los botones.
    */
   listo: boolean;
@@ -104,6 +107,7 @@ export interface EstadoIA {
 const IA_APAGADA: EstadoIA = {
   cargando: false,
   disponible: false,
+  proveedor: "",
   modelo: "",
   transcripcion: false,
   motorTranscripcion: "",
@@ -169,6 +173,7 @@ export function useIA(): EstadoIA {
         setEstado({
           cargando: false,
           disponible: !!d.disponible,
+          proveedor: d.proveedor ?? "",
           modelo: d.modelo ?? "",
           transcripcion: !!d.transcripcion,
           motorTranscripcion: d.motorTranscripcion ?? "",

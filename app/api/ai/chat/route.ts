@@ -1,11 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
-import {
-  MODELO,
-  errorApi,
-  getCliente,
-  hayClave,
-  sinClave,
-} from "@/lib/ai/client";
+import { errorApi, proveedorActivo, sinClave } from "@/lib/ai/proveedor";
+import type { MensajeIA } from "@/lib/ai/proveedores/tipos";
 import { sistemaChat } from "@/lib/ai/prompts";
 import { responderPreflight } from "@/lib/ai/cors";
 import { protegida } from "@/lib/ai/guardia";
@@ -26,7 +20,8 @@ export const maxDuration = 300;
  * intacto entre turnos y solo se pagan tokens completos por la ficha.
  */
 async function manejar(req: Request) {
-  if (!hayClave()) return sinClave();
+  const ia = proveedorActivo();
+  if (!ia.ok) return sinClave(ia);
 
   try {
     const body = (await req.json()) as {
@@ -43,44 +38,35 @@ async function manejar(req: Request) {
       );
     }
 
-    const messages: Anthropic.MessageParam[] = historial.map((m, i) => {
+    const mensajes: MensajeIA[] = historial.map((m, i) => {
       const esUltimo = i === historial.length - 1;
       if (esUltimo && m.rol === "user") {
         return {
-          role: "user",
-          content: `<ficha_del_opositor>\n${body.ficha}\n</ficha_del_opositor>\n\n${m.texto}`,
+          rol: "user",
+          texto: `<ficha_del_opositor>\n${body.ficha}\n</ficha_del_opositor>\n\n${m.texto}`,
         };
       }
-      return { role: m.rol, content: m.texto };
+      return { rol: m.rol, texto: m.texto };
     });
 
-    const stream = getCliente().messages.stream({
-      model: MODELO,
-      max_tokens: 16000,
-      system: [
-        {
-          type: "text",
-          text: sistemaChat(body.estilo ?? "directo"),
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages,
+    // El proveedor devuelve ya los trozos de texto: si es Anthropic salen
+    // de los `text_delta` y si es OpenAI de los `response.output_text.delta`.
+    // Aquí abajo eso da igual, que es justo la gracia.
+    const flujo = ia.proveedor.conversacion({
+      sistema: sistemaChat(body.estilo ?? "directo"),
+      maxTokens: 16000,
+      mensajes,
+      senal: req.signal,
     });
 
     const encoder = new TextEncoder();
     const salida = new ReadableStream({
       async start(controller) {
         try {
-          for await (const evento of stream) {
-            if (
-              evento.type === "content_block_delta" &&
-              evento.delta.type === "text_delta"
-            ) {
-              controller.enqueue(encoder.encode(evento.delta.text));
-            }
+          for await (const trozo of flujo.trozos) {
+            controller.enqueue(encoder.encode(trozo));
           }
-          const final = await stream.finalMessage();
-          if (final.stop_reason === "refusal") {
+          if (flujo.huboRechazo()) {
             controller.enqueue(
               encoder.encode(
                 "\n\n(El modelo no ha podido responder a esta petición.)",
@@ -103,7 +89,7 @@ async function manejar(req: Request) {
         }
       },
       cancel() {
-        stream.abort();
+        flujo.abortar();
       },
     });
 

@@ -1,12 +1,4 @@
-import {
-  MODELO,
-  errorApi,
-  esRechazo,
-  getCliente,
-  hayClave,
-  sinClave,
-  textoDe,
-} from "@/lib/ai/client";
+import { errorApi, proveedorActivo, rechazo, sinClave } from "@/lib/ai/proveedor";
 import { sistemaPlan } from "@/lib/ai/prompts";
 import { responderPreflight } from "@/lib/ai/cors";
 import { protegida } from "@/lib/ai/guardia";
@@ -17,7 +9,8 @@ export const maxDuration = 180;
 
 /** Genera el plan semanal a partir de la ficha real del opositor. */
 async function manejar(req: Request) {
-  if (!hayClave()) return sinClave();
+  const ia = proveedorActivo();
+  if (!ia.ok) return sinClave(ia);
 
   try {
     const body = (await req.json()) as {
@@ -26,34 +19,23 @@ async function manejar(req: Request) {
       estilo?: Perfil["estiloFeedback"];
     };
 
-    const respuesta = await getCliente().messages.create({
-      model: MODELO,
-      max_tokens: 16000,
-      system: [
+    const respuesta = await ia.proveedor.texto({
+      sistema: sistemaPlan(body.estilo ?? "directo"),
+      maxTokens: 16000,
+      mensajes: [
         {
-          type: "text",
-          text: sistemaPlan(body.estilo ?? "directo"),
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [
-        {
-          role: "user",
-          content: `${body.ficha}\n\n---\n\nHazme el plan de la semana que viene.${
+          rol: "user",
+          texto: `${body.ficha}\n\n---\n\nHazme el plan de la semana que viene.${
             body.instrucciones ? `\n\nCondiciones que te pongo: ${body.instrucciones}` : ""
           }`,
         },
       ],
-    }, { signal: req.signal });
+      senal: req.signal,
+    });
 
-    if (esRechazo(respuesta)) {
-      return Response.json(
-        { error: "rechazo", mensaje: "El modelo no ha podido responder." },
-        { status: 422 },
-      );
-    }
+    if (respuesta.rechazado) return rechazo();
 
-    return Response.json({ plan: textoDe(respuesta), modelo: MODELO });
+    return Response.json({ plan: respuesta.texto, modelo: ia.modelo });
   } catch (e) {
     return errorApi(e);
   }
