@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Check, ChevronRight, Sparkles, X } from "lucide-react";
+import { Check, ChevronRight, Mic, MicOff, Sparkles, X } from "lucide-react";
 import { useCantes, useMaterias, useStore, useTema } from "@/lib/store/store";
 import {
   AreaTexto,
@@ -16,6 +16,13 @@ import {
 } from "@/components/ui";
 import { ComparativaEpigrafes } from "@/components/graficos";
 import { FALLOS, type CanteEpigrafe, type TipoFallo } from "@/lib/data/types";
+import {
+  crearGrabadora,
+  grabacionSoportada,
+  type Grabadora,
+  type ResultadoGrabacion,
+} from "@/lib/audio/grabadora";
+import { guardarAudio } from "@/lib/audio/almacen";
 import { reloj } from "@/lib/utils/time";
 import { useFicha, useIA , rutaIA } from "@/lib/ai/hooks";
 import { construirDetalleCante } from "@/lib/ai/contexto";
@@ -72,6 +79,73 @@ function CanteVivo() {
   const epigrafes = tema?.epigrafes ?? [];
   const sinEpigrafes = epigrafes.length === 0;
 
+  /* ------------------------------ grabación ------------------------------ */
+  // Todo lo de aquí es un EXTRA: si el navegador no sabe grabar, si no hay
+  // micrófono o si el opositor dice que no, el cante funciona exactamente
+  // igual que sin esta función. Ninguna rama de abajo puede impedir empezar.
+  const grabadora = React.useRef<Grabadora | null>(null);
+  const [soportado, setSoportado] = React.useState(false);
+  const [quiereGrabar, setQuiereGrabar] = React.useState(true);
+  const [grabando, setGrabando] = React.useState(false);
+  const [avisoAudio, setAvisoAudio] = React.useState<string | null>(null);
+  const [audio, setAudio] = React.useState<ResultadoGrabacion | null>(null);
+
+  // `grabacionSoportada()` mira `window`: en el render del servidor no
+  // existe, así que se resuelve tras montar para no romper la hidratación.
+  React.useEffect(() => {
+    setSoportado(grabacionSoportada());
+    grabadora.current = crearGrabadora();
+    // Soltar el micrófono al salir de la página es obligatorio: si no, el
+    // punto rojo de la pestaña se queda encendido para siempre.
+    return () => grabadora.current?.soltar();
+  }, []);
+
+  /** Pide el permiso. Devuelve si se puede grabar; nunca lanza. */
+  const asegurarPermiso = React.useCallback(async () => {
+    if (!grabadora.current) return false;
+    const ok = await grabadora.current.pedirPermiso();
+    if (!ok) {
+      setQuiereGrabar(false);
+      setAvisoAudio(
+        "Sin acceso al micrófono. El cante va igual; solo no se graba.",
+      );
+    } else {
+      setAvisoAudio(null);
+    }
+    return ok;
+  }, []);
+
+  const alternarGrabacion = React.useCallback(async () => {
+    if (quiereGrabar) {
+      setQuiereGrabar(false);
+      setAvisoAudio(null);
+      grabadora.current?.soltar();
+      return;
+    }
+    setQuiereGrabar(true);
+    // El permiso se pide AQUÍ, con el clic del opositor y antes de empezar:
+    // un diálogo del navegador a media recitación arruina la toma.
+    await asegurarPermiso();
+  }, [quiereGrabar, asegurarPermiso]);
+
+  /** Abre el tramo del epígrafe `i` en la grabación. Coste: un push. */
+  const marcarEnAudio = React.useCallback(
+    (i: number) => {
+      const e = epigrafes[i];
+      grabadora.current?.marcar(
+        e?.id ?? `sin-epigrafe-${i}`,
+        e?.titulo ?? "Tema completo",
+      );
+    },
+    [epigrafes],
+  );
+
+  const detenerGrabacion = React.useCallback(async () => {
+    const r = await grabadora.current?.parar();
+    setGrabando(false);
+    if (r) setAudio(r);
+  }, []);
+
   /* --------------------------------- reloj -------------------------------- */
   React.useEffect(() => {
     if (fase !== "cantando") return;
@@ -86,7 +160,19 @@ function CanteVivo() {
 
   /* -------------------------------- acciones ------------------------------- */
 
-  const empezar = React.useCallback(() => {
+  const empezar = React.useCallback(async () => {
+    // El único `await` de todo el cante, y está ANTES de la primera palabra:
+    // si el stream ya estaba abierto (el opositor activó la casilla antes)
+    // resuelve en el acto; si no, el diálogo del navegador sale aquí y no en
+    // mitad del epígrafe 3.
+    let conAudio = false;
+    if (quiereGrabar && soportado) {
+      conAudio = await asegurarPermiso();
+      if (conAudio) conAudio = grabadora.current?.empezar() ?? false;
+    }
+    setGrabando(conAudio);
+    setAudio(null);
+
     const t = Date.now();
     setInicio(t);
     setInicioEpigrafe(t);
@@ -95,7 +181,8 @@ function CanteVivo() {
     setRegistrados([]);
     setFallosActuales([]);
     setFase("cantando");
-  }, []);
+    if (conAudio) marcarEnAudio(0);
+  }, [quiereGrabar, soportado, asegurarPermiso, marcarEnAudio]);
 
   const cerrarEpigrafe = React.useCallback(() => {
     const e = epigrafes[indice];
@@ -116,18 +203,30 @@ function CanteVivo() {
     if (sinEpigrafes) return;
     cerrarEpigrafe();
     if (indice + 1 >= epigrafes.length) {
+      // El `parar()` se lanza sin esperarlo: la fase cambia ya y el blob se
+      // ensambla mientras se pinta el resumen.
+      void detenerGrabacion();
       setFase("resumen");
     } else {
       setIndice((i) => i + 1);
       setInicioEpigrafe(Date.now());
+      marcarEnAudio(indice + 1);
     }
-  }, [cerrarEpigrafe, indice, epigrafes.length, sinEpigrafes]);
+  }, [
+    cerrarEpigrafe,
+    indice,
+    epigrafes.length,
+    sinEpigrafes,
+    marcarEnAudio,
+    detenerGrabacion,
+  ]);
 
   const terminar = React.useCallback(() => {
     if (fase !== "cantando") return;
     cerrarEpigrafe();
+    void detenerGrabacion();
     setFase("resumen");
-  }, [fase, cerrarEpigrafe]);
+  }, [fase, cerrarEpigrafe, detenerGrabacion]);
 
   const marcarFallo = React.useCallback((f: TipoFallo) => {
     setFallosActuales((prev) => [...prev, f]);
@@ -141,7 +240,7 @@ function CanteVivo() {
     const onKey = (e: KeyboardEvent) => {
       if (fase === "listo" && (e.code === "Space" || e.code === "Enter")) {
         e.preventDefault();
-        empezar();
+        void empezar();
         return;
       }
       if (fase !== "cantando") return;
@@ -226,8 +325,52 @@ function CanteVivo() {
             )}
           </p>
 
+          {soportado && (
+            <div className="mt-9 flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Se quita el foco: si no, la barra espaciadora que arranca
+                  // el cante volvería a pulsar este botón.
+                  e.currentTarget.blur();
+                  void alternarGrabacion();
+                }}
+                aria-pressed={quiereGrabar}
+                className={cx(
+                  "inline-flex items-center gap-2.5 h-10 px-4 rounded-full border text-[13px] transition-colors",
+                  quiereGrabar
+                    ? "text-fg border-[var(--border-strong)] bg-[var(--surface-2)]"
+                    : "text-subtle border-[var(--border)] hover:text-fg",
+                )}
+              >
+                {quiereGrabar ? (
+                  <Mic className="size-4" style={{ color: "var(--lacre-bright)" }} />
+                ) : (
+                  <MicOff className="size-4" />
+                )}
+                {quiereGrabar ? "Se grabará el audio" : "Sin grabar el audio"}
+              </button>
+              <p className="text-[12px] text-subtle max-w-md leading-relaxed">
+                {quiereGrabar
+                  ? "La grabación se queda en este dispositivo. Después podrás escucharla y, si tienes el texto del tema, comparar lo que dijiste con lo que ponía."
+                  : "El cante se cronometra igual; simplemente no se guarda el audio."}
+              </p>
+            </div>
+          )}
+
+          {avisoAudio && (
+            <p className="text-[12.5px] mt-4 text-[var(--warn)] leading-relaxed">
+              {avisoAudio}
+            </p>
+          )}
+
           <div className="mt-10">
-            <Boton variante="primario" tam="lg" onClick={empezar} className="px-10">
+            <Boton
+              variante="primario"
+              tam="lg"
+              onClick={() => void empezar()}
+              className="px-10"
+            >
               Empezar el cante
             </Boton>
             <p className="text-[12px] text-subtle mt-4">
@@ -273,6 +416,25 @@ function CanteVivo() {
               : `Epígrafe ${indice + 1} de ${epigrafes.length}`}
           </div>
           <div className="flex items-baseline gap-3">
+            {grabando && (
+              // Indicador y nada más: pulsar aquí no abre diálogos ni
+              // confirmaciones. Detener la grabación no detiene el cante.
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  void detenerGrabacion();
+                }}
+                title="Dejar de grabar (el cante sigue)"
+                className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-subtle hover:text-fg transition-colors self-center mr-1"
+              >
+                <span
+                  className="size-2 rounded-full animate-pulse"
+                  style={{ background: "var(--lacre-bright)" }}
+                />
+                Grabando
+              </button>
+            )}
             <span
               className="numeric text-[30px] font-semibold tracking-tight tabular-nums"
               style={{ color: pasado ? "var(--danger)" : "var(--fg)" }}
@@ -374,6 +536,7 @@ function CanteVivo() {
       registrados={registrados}
       cantesPrevios={cantesPrevios}
       perfil={perfil}
+      audio={audio}
       onGuardar={guardarCante}
       onAnalisis={setAnalisisCante}
       onSalir={() => router.push(`/tema/${tema.id}`)}
@@ -391,6 +554,7 @@ function Resumen({
   registrados,
   cantesPrevios,
   perfil,
+  audio,
   onGuardar,
   onAnalisis,
   onSalir,
@@ -400,6 +564,7 @@ function Resumen({
   registrados: CanteEpigrafe[];
   cantesPrevios: import("@/lib/data/types").Cante[];
   perfil: import("@/lib/data/types").Perfil;
+  audio: ResultadoGrabacion | null;
   onGuardar: (
     c: Omit<import("@/lib/data/types").Cante, "id" | "fecha" | "actualizado"> & {
       fecha?: number;
@@ -410,7 +575,9 @@ function Resumen({
 }) {
   const ia = useIA();
   const ficha = useFicha();
+  const setAudioCante = useStore((s) => s.setAudioCante);
 
+  const [conservarAudio, setConservarAudio] = React.useState(true);
   const [nota, setNota] = React.useState<number | null>(null);
   const [conPreparador, setConPreparador] = React.useState(false);
   const [feedback, setFeedback] = React.useState("");
@@ -423,17 +590,55 @@ function Resumen({
   const objetivo = perfil.minutosPorTema * 60;
   const anterior = cantesPrevios[0];
 
+  // El cante creado, por si hay que volver a pulsar "Guardar" tras un fallo
+  // del análisis o de la grabación: sin esto, el segundo intento crearía un
+  // cante duplicado con las mismas horas.
+  const creado = React.useRef<import("@/lib/data/types").Cante | null>(null);
+
   const guardar = async () => {
     setGuardando(true);
     setError(null);
-    const cante = onGuardar({
-      temaId: tema.id,
-      segundos,
-      epigrafes: registrados,
-      nota: nota ?? undefined,
-      conPreparador,
-      feedback: feedback.trim() || undefined,
-    });
+    const cante =
+      creado.current ??
+      onGuardar({
+        temaId: tema.id,
+        segundos,
+        epigrafes: registrados,
+        nota: nota ?? undefined,
+        conPreparador,
+        feedback: feedback.trim() || undefined,
+      });
+    creado.current = cante;
+
+    // La grabación, ANTES del análisis: el blob ya está en memoria y
+    // escribirlo es lo único que puede perderse al cerrar la pestaña. Va al
+    // almacén de audio, indexado por el id del cante, nunca al store.
+    if (audio && conservarAudio) {
+      const ok = await guardarAudio(cante.id, {
+        blob: audio.blob,
+        mime: audio.mime,
+        segundos: audio.segundos,
+        creado: Date.now(),
+      });
+      if (ok) {
+        // Por el store, para que el reloj se selle y la fila viaje: la ruta
+        // de Storage la rellena después la subida (lib/audio/subida.ts).
+        setAudioCante(cante.id, {
+          mime: audio.mime,
+          bytes: audio.blob.size,
+          segundos: audio.segundos,
+          marcas: audio.marcas,
+        });
+      } else {
+        setError(
+          "El cante está guardado, pero la grabación no ha cabido en este navegador " +
+            "(sin espacio o en modo incógnito). Vuelve a pulsar Guardar para seguir sin ella.",
+        );
+        setConservarAudio(false);
+        setGuardando(false);
+        return;
+      }
+    }
 
     if (analizar && ia.disponible) {
       try {
@@ -584,6 +789,28 @@ function Resumen({
             placeholder="Lo que te ha dicho el preparador, o lo que tú has notado. Cuanto más concreto, mejor analiza la IA."
           />
         </Card>
+
+        {audio && (
+          <label className="flex items-start gap-3 mb-5 cursor-pointer px-4 py-3.5 rounded-[10px] border border-[var(--border)] bg-[var(--surface-2)]">
+            <input
+              type="checkbox"
+              checked={conservarAudio}
+              onChange={(e) => setConservarAudio(e.target.checked)}
+              className="size-4 accent-[var(--lacre-bright)] mt-0.5"
+            />
+            <span>
+              <span className="text-[13.5px] font-medium flex items-center gap-2">
+                <Mic className="size-3.5 text-[var(--lacre-bright)]" />
+                Guardar la grabación ({reloj(audio.segundos)})
+              </span>
+              <span className="text-[12.5px] text-muted block mt-1 leading-relaxed">
+                Se queda en este dispositivo. Si tienes cuenta, sube sola cuando
+                haya red; desde la ficha del tema podrás escucharla y compararla
+                con el texto del tema.
+              </span>
+            </span>
+          </label>
+        )}
 
         {ia.disponible && (
           <label className="flex items-start gap-3 mb-6 cursor-pointer px-4 py-3.5 rounded-[10px] border"

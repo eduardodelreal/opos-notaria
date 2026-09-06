@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ListTree,
   Mic,
+  Music2,
   NotebookPen,
   Play,
   Plus,
@@ -44,7 +45,7 @@ import {
   useConfirmacion,
 } from "@/components/ui";
 import { ComparativaEpigrafes, Linea } from "@/components/graficos";
-import { ESTADOS, type AnalisisCante, type Cante } from "@/lib/data/types";
+import { ESTADOS, type AnalisisCante, type Cante, type Tema } from "@/lib/data/types";
 import { estadoEfectivo, intervaloDias, ultimoContacto } from "@/lib/data/srs";
 import { aEpigrafes, minutosEstimados, parsearEpigrafes } from "@/lib/data/parser";
 import { fecha, haceTexto, horasMin, reloj } from "@/lib/utils/time";
@@ -52,6 +53,8 @@ import { plural } from "@/lib/utils/texto";
 import { useFicha, useIA , rutaIA } from "@/lib/ai/hooks";
 import { construirDetalleCante } from "@/lib/ai/contexto";
 import { TarjetaAnalisis } from "@/components/TarjetaAnalisis";
+import { GrabacionCante } from "@/components/GrabacionCante";
+import { olvidarAudio } from "@/lib/audio/subida";
 
 type Pestana = "epigrafes" | "cantes" | "keypoints" | "notas";
 
@@ -563,7 +566,9 @@ function PanelCantes({
   tema,
   cantes,
 }: {
-  tema: { id: string; numero: number; titulo: string; materiaId: string };
+  // El tema entero, y no solo su cabecera: la comparación de la grabación
+  // con el temario necesita el texto de cada epígrafe.
+  tema: Tema;
   cantes: Cante[];
 }) {
   const materias = useMaterias();
@@ -584,7 +589,7 @@ function PanelCantes({
       const anteriores = cantes.filter((c) => c.fecha < cante.fecha);
       const detalle = construirDetalleCante(
         cante,
-        tema as never,
+        tema,
         materias.find((m) => m.id === tema.materiaId),
         anteriores,
         perfil.minutosPorTema,
@@ -679,6 +684,12 @@ function PanelCantes({
                       analizado
                     </Badge>
                   )}
+                  {c.audio && (
+                    <Badge color="var(--lacre-bright)">
+                      <Music2 className="size-3" />
+                      grabado
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-[12px] text-muted mt-1">
                   {reloj(c.segundos)} · objetivo {perfil.minutosPorTema} min ·{" "}
@@ -747,6 +758,12 @@ function PanelCantes({
                   </div>
                 )}
 
+                <GrabacionCante
+                  cante={c}
+                  tema={tema}
+                  estilo={perfil.estiloFeedback}
+                />
+
                 {c.analisis ? (
                   <TarjetaAnalisis analisis={c.analisis} />
                 ) : (
@@ -770,7 +787,13 @@ function PanelCantes({
 
                 <div className="flex justify-end">
                   <button
-                    onClick={() => removeCante(c.id)}
+                    onClick={() => {
+                      // La tumba que viaja es la fila; el binario se borra de
+                      // verdad (0002). Lo que no se pueda borrar ahora (sin
+                      // red) lo recoge la purga de lib/audio/subida.ts.
+                      void olvidarAudio(c);
+                      removeCante(c.id);
+                    }}
                     className="text-[12px] text-subtle hover:text-[var(--danger)] transition-colors inline-flex items-center gap-1.5"
                   >
                     <Trash2 className="size-3.5" />

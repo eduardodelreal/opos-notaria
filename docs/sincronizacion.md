@@ -288,6 +288,57 @@ fila— es exactamente el escenario que pierde el cante en la biblioteca.
 Para reproducir: `createSignedUrl(path, segundos)` con caducidad corta (minutos).
 Un 404 al firmar significa "grabación pendiente de subir", no error.
 
+### Cómo está implementado (`lib/audio/`)
+
+- **El blob NO está en el store.** Vive en su propia base de IndexedDB
+  (`opos-notaria-audio`, `lib/audio/almacen.ts`), indexado por el id del cante.
+  El estado del store se serializa entero a JSON en cada escritura: con el
+  audio dentro, cada tecla de fallo marcada durante el cante reescribiría
+  varios megas —y en base64, un tercio más—, justo en el momento en el que la
+  app no se puede permitir una pausa. En el store queda solo la ficha
+  (`Cante.audio`: ruta, mime, bytes, duración y las marcas de epígrafe).
+
+- **La cola de binarios no es una cola: se deriva del dato.** Pendiente = hay
+  blob en local y la ficha del cante no dice `subido`. Se decidió así en vez
+  de extender la cola de `lib/sync/cola.ts` por dos motivos. Uno, esa cola
+  guarda `{tabla, id}` y su valor está en que el push relee la fila del estado
+  actual; un binario no es una fila, no lo toca `escribir()`, no lo sella el
+  reloj y no cabe en `filasParaPush`, así que habría que inventar una tabla
+  falsa que se colaría en el orden de claves ajenas. Y dos, una cola paralela
+  se puede desincronizar del dato al que apunta (entradas hacia blobs que ya
+  no están, blobs sin entrada que no suben nunca); una cola que se deduce, no.
+
+- **Va después del ciclo de filas y en su propio `try`**
+  (`lib/sync/servicio.ts`): que no haya podido subir un audio de 5 MB con la
+  wifi de la biblioteca no convierte en fallida una sincronización cuyo
+  expediente ya está arriba. Backoff propio, en memoria, por cante.
+
+- **Nunca durante el cante.** Hereda el bloqueo de `bloquearSincronizacion()`,
+  porque cuelga del mismo ciclo.
+
+- **Purga.** Un cante enterrado se lleva su binario por delante, en local y en
+  Storage. Aquí sí hay borrado físico: la tumba que viaja es la fila.
+
+### Lo que NO viaja, y por qué
+
+`Cante.transcripcion` y `Cante.comparacion` **no tienen columna** en el
+esquema, y las migraciones están cerradas. Se quedan en el dispositivo que las
+generó. Como el audio sí sube, en otro aparato se pueden volver a generar
+desde la grabación; cuesta una llamada al transcriptor, no el trabajo del
+opositor.
+
+Lo que sí hubo que arreglar para que esto no fuera una pérdida silenciosa: la
+fusión **no puede borrar un campo del que la fila del servidor no habla**.
+Ganar el last-write-wins significa "mi versión de lo que está en la tabla es
+más nueva", no "lo que tú tienes de más ya no vale". `fundirCante()` en
+`lib/sync/fusion.ts` conserva transcripción, comparación y los metadatos
+locales del audio cuando gana el remoto. Hay una comprobación de esto en
+`pruebas/sincronizacion.mjs`, contra Postgres.
+
+Si algún día se abren las migraciones, dos columnas `jsonb` en `cantes`
+(`transcripcion`, `comparacion`) y sus conversores en `lib/sync/tablas.ts`
+cierran el hueco sin tocar nada más.
+
 ---
 
 ## 9. Deudas del modelo actual
@@ -395,4 +446,4 @@ las filas a sincronizar para arreglar un problema que no se da.
 - [ ] Aplanar/reanidar epígrafes (§9.2).
 - [ ] Recalcular `segundos` y `nota_media` desde `sesiones`/`cantes` tras cada pull (§6).
 - [ ] Borrado = `deleted_at`, y filtro `deleted_at is null` en todos los selectores.
-- [ ] Audio en cola aparte, después de la fila (§8).
+- [x] Audio en cola aparte, después de la fila (§8). Hecho en `lib/audio/`.

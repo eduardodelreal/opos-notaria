@@ -36,6 +36,9 @@ local y en un despliegue solo-Railway todo funciona sin tocar nada.
 |---|:---:|:---:|---|
 | `ANTHROPIC_API_KEY` | **sí** | no | Solo la necesita quien atiende las rutas de IA |
 | `ANTHROPIC_MODEL` | opcional | no | Por defecto `claude-opus-5` |
+| `TRANSCRIPCION_API_KEY` | opcional | no | Transcribir los cantes. Es **otro proveedor**: la API de Anthropic no acepta audio (docs/ia.md) |
+| `TRANSCRIPCION_URL` | opcional | no | Por defecto `https://api.openai.com/v1`. Cualquier servicio con `POST /audio/transcriptions` |
+| `TRANSCRIPCION_MODELO` | opcional | no | Por defecto `whisper-1` |
 | `NEXT_PUBLIC_SUPABASE_URL` | sí | sí | **Se incrusta al compilar** |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | sí | sí | **Se incrusta al compilar**. Es pública por diseño; la seguridad la da RLS |
 | `NEXT_PUBLIC_IA_URL` | **vacía** | URL de Railway | **Se incrusta al compilar** |
@@ -140,8 +143,10 @@ Desde el dominio de Netlify:
 
 - **Sin `ANTHROPIC_API_KEY`** la app funciona entera; los botones de IA lo
   avisan en pantalla.
+- **Sin `TRANSCRIPCION_API_KEY`** el cante se graba, se guarda y se escucha
+  igual; solo se apagan transcribir y comparar, diciendo por qué.
 - **Sin credenciales de Supabase** la app funciona entera en local, sin
-  login ni sincronización.
+  login ni sincronización. Las grabaciones se quedan en el navegador.
 - Ninguna pantalla queda detrás de una guarda de sesión.
 
 ---
@@ -154,4 +159,7 @@ Desde el dominio de Netlify:
 | Error de CORS en la consola | `ORIGENES_PERMITIDOS` en Railway no incluye el dominio de Netlify |
 | Los botones de IA salen apagados | Falta `ANTHROPIC_API_KEY` en Railway, o `NEXT_PUBLIC_IA_URL` apunta a un sitio que no responde |
 | No aparece el bloque de sesión | Faltan las `NEXT_PUBLIC_SUPABASE_*`, o se declararon después de compilar |
+| No sale la casilla de grabar el cante | El navegador no soporta `MediaRecorder`, o la página no se sirve por HTTPS (fuera de `localhost`, `getUserMedia` exige contexto seguro) |
+| «Permissions policy violation: microphone» en consola | Un proxy o CDN delante está reescribiendo la cabecera `Permissions-Policy`. La app la manda como `microphone=(self)` desde `next.config.ts` |
+| El audio no sube a Supabase | Falta ejecutar `0002_storage_audio.sql`, o no hay sesión iniciada. El cante y su grabación siguen a salvo en local |
 | Redirección fallida al entrar | La *Redirect URL* de Supabase no coincide exactamente con el dominio |

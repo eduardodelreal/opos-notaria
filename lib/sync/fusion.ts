@@ -169,6 +169,7 @@ function aplicarLote(acc: Acumulador, lote: LoteBajado, marcas: Marcas): void {
         lote.filas as FilaCante[],
         deFilaCante,
         (c) => c.actualizado,
+        fundirCante,
       );
     case "keypoints":
       return lista<KeyPoint, FilaKeyPoint>(
@@ -209,13 +210,22 @@ function aplicarLote(acc: Acumulador, lote: LoteBajado, marcas: Marcas): void {
   }
 }
 
-/** Colecciones planas con id y reloj: materias, cantes, keypoints, notas… */
+/**
+ * Colecciones planas con id y reloj: materias, cantes, keypoints, notas…
+ *
+ * `fundir` es para las entidades que tienen campos SIN columna en el
+ * servidor. Una fila que no habla de un campo no puede borrarlo: ganar el
+ * last-write-wins significa "mi versión de lo que está en la tabla es más
+ * nueva", no "lo que tú tienes de más ya no vale". Hoy solo lo usan los
+ * cantes (transcripción, comparación y la ficha del audio).
+ */
 function lista<E extends { id: string }, F extends Fila>(
   acc: Acumulador,
   clave: "materias" | "cantes" | "keypoints" | "notas" | "simulacros" | "vueltas",
   filas: F[],
   deFila: (f: F) => E,
   reloj: (e: E) => number,
+  fundir?: (local: E, entrante: E) => E,
 ): void {
   if (!filas.length) return;
   const actual = acc.exp[clave] as unknown as E[];
@@ -237,7 +247,7 @@ function lista<E extends { id: string }, F extends Fila>(
     const rr = reloj(entrante);
     if (rr > rl) {
       salida = salida ?? [...actual];
-      salida[i] = entrante;
+      salida[i] = fundir ? fundir(local, entrante) : entrante;
       acc.aplicadas += 1;
     } else if (rr < rl) {
       acc.reencolar.push({ tabla: clave, id: entrante.id });
@@ -248,6 +258,24 @@ function lista<E extends { id: string }, F extends Fila>(
     (acc.exp as unknown as Record<string, unknown>)[clave] = salida;
     acc.cambia.add(clave);
   }
+}
+
+/**
+ * Lo que el cante remoto NO puede borrar aunque gane el arbitraje.
+ *
+ * `transcripcion` y `comparacion` no tienen columna: el otro dispositivo ni
+ * siquiera sabe que existen, y sustituir la fila entera con lo que baja
+ * borraría un análisis que costó una llamada al modelo. De la ficha del
+ * audio, la fila solo trae `audio_path`; el mime, la duración y las marcas
+ * de epígrafe son de aquí y se conservan.
+ */
+function fundirCante(local: Cante, entrante: Cante): Cante {
+  return {
+    ...entrante,
+    audio: entrante.audio ? { ...local.audio, ...entrante.audio } : local.audio,
+    transcripcion: entrante.transcripcion ?? local.transcripcion,
+    comparacion: entrante.comparacion ?? local.comparacion,
+  };
 }
 
 function aplicarPerfil(acc: Acumulador, filas: FilaPerfil[], marcas: Marcas): void {

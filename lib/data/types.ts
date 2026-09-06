@@ -252,6 +252,111 @@ export interface AnalisisCante {
   modelo: string;
 }
 
+/* --------------------------- grabación del cante -------------------------- */
+
+/**
+ * Marca temporal de un epígrafe dentro de la grabación.
+ *
+ * Se anota EN VIVO, al pasar de epígrafe, con un simple `Date.now()`: es lo
+ * único que permite luego partir la transcripción por epígrafes y saltar en
+ * el reproductor al minuto exacto en el que se recitó cada uno. Sin esto la
+ * comparación con el temario solo podría hablar del tema entero, que es
+ * justo el nivel de detalle que no sirve para nada (docs/decisiones.md §2).
+ */
+export interface MarcaEpigrafe {
+  epigrafeId: string;
+  titulo: string;
+  /** Milisegundos desde el inicio de la grabación. */
+  desdeMs: number;
+  hastaMs: number;
+}
+
+/**
+ * Metadatos de la grabación de un cante. **El binario no está aquí.**
+ *
+ * El audio pesa megas y el store se serializa entero en cada escritura
+ * (zustand/persist): meter el blob aquí convertiría cada tecla marcada
+ * durante un cante en una escritura de varios megabytes a IndexedDB. El
+ * binario vive en su propio almacén (`lib/audio/almacen.ts`), indexado por
+ * el id del cante, y esto es solo la ficha que sí viaja con la fila.
+ */
+export interface AudioCante {
+  /**
+   * Ruta dentro del bucket privado `cantes-audio`, con el convenio
+   * `<usuario_id>/<cante_id>.<ext>` del que depende toda la seguridad de
+   * Storage (db/migrations/0002_storage_audio.sql). Es `undefined` mientras
+   * no haya sesión: sin `usuario_id` la ruta no se puede componer, y la
+   * grabación se queda perfectamente utilizable en local.
+   */
+  path?: string;
+  mime?: string;
+  bytes?: number;
+  segundos?: number;
+  /** Momento en que el binario quedó confirmado en Storage. */
+  subido?: number;
+  /** Índice de epígrafes dentro del audio. */
+  marcas?: MarcaEpigrafe[];
+}
+
+/**
+ * Transcripción del cante.
+ *
+ * OJO: la Messages API de Anthropic **no acepta audio** (solo texto,
+ * imágenes y PDF), así que esto no lo produce el mismo modelo que el resto
+ * de la IA de la app. Lo genera un servicio de transcripción aparte,
+ * configurable, y por eso guarda de qué proveedor viene (ver docs/ia.md).
+ */
+export interface TranscripcionCante {
+  texto: string;
+  /** Proveedor y modelo que la generaron, p. ej. "openai/whisper-1". */
+  motor: string;
+  generado: number;
+  /** Segundos de audio transcritos, si el proveedor los informa. */
+  segundos?: number;
+}
+
+export type TipoOmision =
+  | "articulo"
+  | "requisito"
+  | "clasificacion"
+  | "plazo"
+  | "concepto"
+  | "epigrafe";
+
+/** Una cosa del temario que no aparece en lo que el opositor recitó. */
+export interface OmisionCante {
+  /** Título del epígrafe donde falta. */
+  epigrafe: string;
+  tipo: TipoOmision;
+  /** Qué falta, dicho en una línea. */
+  falta: string;
+  /** Fragmento del texto del tema que lo respalda. Sin inventar. */
+  cita?: string;
+  gravedad: "alta" | "media" | "baja";
+}
+
+/**
+ * Resultado de comparar la transcripción con el texto del tema.
+ *
+ * Es el diferencial del producto: en vez de "has fallado el epígrafe 3",
+ * dice negro sobre blanco QUÉ se saltó — el artículo que no citó, el cuarto
+ * requisito de la lista, la excepción que se comió.
+ */
+export interface ComparacionCante {
+  titular: string;
+  /** 0-100: cuánto del contenido del tema aparece de verdad en el cante. */
+  cobertura: number;
+  omisiones: OmisionCante[];
+  /** Cosas dichas que no están en el temario (posible dato inventado). */
+  dichoDeMas: string[];
+  /** Epígrafes recitados de memoria pero incompletos. */
+  epigrafesIncompletos: { epigrafe: string; cobertura: number; nota: string }[];
+  /** Veredicto sobre la literalidad: cuánto se ciñe al texto estudiado. */
+  literalidad: string;
+  generado: number;
+  modelo: string;
+}
+
 export interface Cante {
   id: string;
   temaId: string;
@@ -263,6 +368,21 @@ export interface Cante {
   conPreparador: boolean;
   feedback?: string;
   analisis?: AnalisisCante;
+  /**
+   * Grabación del cante, si la hubo. Solo la ficha: el binario vive en
+   * `lib/audio/almacen.ts`. De todo esto la única columna que existe en el
+   * servidor es `cantes.audio_path` (0001), así que es lo único que viaja.
+   */
+  audio?: AudioCante;
+  /**
+   * Transcripción y comparación con el texto del tema. **No sincronizan**:
+   * el esquema no tiene columnas para ellas y las migraciones están
+   * cerradas. Quedan en el dispositivo que las generó; el audio sí sube, así
+   * que en otro aparato se pueden volver a generar desde la grabación. Ver
+   * docs/sincronizacion.md §8.
+   */
+  transcripcion?: TranscripcionCante;
+  comparacion?: ComparacionCante;
   /** Reloj del last-write-wins (`updated_at`): nota, feedback y análisis. */
   actualizado: number;
   /** Tumba (`deleted_at`). */

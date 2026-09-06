@@ -57,16 +57,18 @@ Meter la ficha en el system prompt invalidaría la caché en cada mensaje.
 
 ---
 
-## Los cinco endpoints
+## Los endpoints
 
 | Ruta | Modo | Salida |
 |---|---|---|
 | `POST /api/ai/analisis-cante` | no streaming | JSON estructurado (`output_config.format`) |
+| `POST /api/ai/comparar-cante` | no streaming | JSON estructurado |
+| `POST /api/ai/transcribir` | no streaming | `{ transcripcion }` · **no es Anthropic** |
 | `POST /api/ai/chat` | **streaming** | `text/plain` en chunks |
 | `POST /api/ai/plan` | no streaming | texto |
 | `POST /api/ai/keypoints` | no streaming | JSON estructurado |
 | `POST /api/ai/dictamen` | no streaming | texto |
-| `GET /api/ai/estado` | — | `{ disponible, modelo }` |
+| `GET /api/ai/estado` | — | `{ disponible, modelo, transcripcion, motorTranscripcion }` |
 
 ### Salida estructurada
 
@@ -80,6 +82,63 @@ El chat usa `client.messages.stream()` y reenvía los `text_delta` por un
 `ReadableStream`. `cancel()` aborta la llamada al modelo cuando el usuario
 cierra la pestaña o pulsa parar: no se sigue pagando por tokens que nadie va
 a leer.
+
+---
+
+## Audio: qué acepta de verdad la API de Anthropic
+
+**No acepta audio.** Esto se comprobó contra la documentación antes de
+escribir una línea de la transcripción, y conviene dejarlo escrito porque es
+justo la clase de cosa que uno da por hecha:
+
+- Los bloques de contenido de la Messages API son `text`, `image`
+  (`image/jpeg`, `image/png`, `image/gif`, `image/webp`), `document`
+  (`application/pdf` y `text/plain`), `search_result`, `thinking`,
+  `tool_use`/`tool_result` y `container_upload`. **No hay bloque de audio**,
+  ni `media_type` de audio en ninguna fuente.
+- La Files API admite esos mismos tipos (PDF → `document`, imágenes →
+  `image`) y datasets para el *code execution tool* (`container_upload`).
+  Los únicos audios que aparecen en su documentación son ficheros que el
+  modelo **genera** dentro del sandbox y se descargan después, no entradas.
+- No existe ningún endpoint de transcripción en la API.
+
+Mandar un `webm` en base64 disfrazado de `document` no funciona: la petición
+se rechaza. Y fingir que sí para "cumplir" habría sido peor que no hacerlo.
+
+### Qué se ha hecho en su lugar
+
+Se parte en dos, cada mitad donde aporta:
+
+1. **Transcribir** (audio → texto) lo hace un servicio compatible con el
+   dialecto `POST /audio/transcriptions` de OpenAI: `lib/ai/transcripcion.ts`
+   y la ruta `/api/ai/transcribir`. Ese dialecto lo hablan OpenAI (Whisper),
+   Groq (`whisper-large-v3`), faster-whisper y `whisper.cpp` servido en
+   local, así que el opositor puede elegir proveedor —o no salir de su
+   máquina— cambiando `TRANSCRIPCION_URL`. Se le manda una **pista** con el
+   título del tema y sus epígrafes: sin ella el transcriptor destroza los
+   tecnicismos jurídicos, y lo que escribe mal se cuenta luego como una
+   laguna que nunca existió.
+2. **Comparar** (texto contra texto) lo hace Claude, en
+   `/api/ai/comparar-cante`, con salida estructurada. Aquí sí aporta: recibe
+   el texto del tema por epígrafes, el guion cronometrado del cante y la
+   transcripción, y devuelve qué se saltó, con la cita literal del temario
+   que lo respalda.
+
+Alternativa descartada: **Web Speech API** en el navegador. Es gratis y no
+necesita proveedor, pero (a) solo la implementan de verdad Chrome y Safari,
+(b) en Chrome manda el audio a los servidores de Google igualmente, (c)
+solo transcribe en directo, así que habría que escuchar **durante** el
+cante —un segundo consumidor del micrófono y un reconocedor que se corta
+cada pocos segundos y hay que reiniciar—, y la regla del modo cante es que
+nada puede estorbar al cante. Queda anotada por si algún día interesa como
+respaldo sin clave.
+
+### Sin proveedor de transcripción
+
+Se graba, se guarda y se reproduce igual. Los botones de transcribir y
+comparar salen apagados con el motivo escrito: *"la API de Anthropic no
+acepta audio; hace falta un proveedor compatible con Whisper"*. Es la misma
+degradación honesta que el resto de la app sin `ANTHROPIC_API_KEY`.
 
 ---
 
@@ -112,8 +171,12 @@ opositores y cuarenta minutos no da rodeos.
 - La clave vive solo en el servidor (`ANTHROPIC_API_KEY`). Nunca llega al
   navegador.
 - Se envía la ficha descrita arriba. **No** se envía el texto completo de los
-  temas, salvo cuando el usuario pide expresamente extraer keypoints de un tema
-  o corregir un dictamen.
+  temas, salvo cuando el usuario pide expresamente extraer keypoints de un tema,
+  corregir un dictamen o comparar un cante con el texto del tema.
+- El **audio** solo sale del navegador si el opositor pulsa "Transcribir", y va
+  al proveedor de transcripción configurado, que puede ser su propia máquina.
+  La grabación se guarda siempre en local; a Supabase sube únicamente si hay
+  sesión iniciada, a un bucket privado donde cada uno solo ve su carpeta.
 - Sin clave, no sale nada del navegador y la app funciona entera menos estas
   cinco funciones, que lo avisan en pantalla.
 

@@ -5,6 +5,7 @@ import type {
   ProgresoTema,
   Sesion,
   Tema,
+  TranscripcionCante,
 } from "../data/types";
 import {
   colaDeRepaso,
@@ -214,6 +215,86 @@ export function construirDetalleCante(
     l.push("");
     l.push("(Es el primer cante registrado de este tema: no hay comparativa.)");
   }
+
+  return l.join("\n");
+}
+
+/* ------------------------- comparación con el temario ---------------------- */
+
+/**
+ * Vocabulario del tema para el transcriptor.
+ *
+ * Whisper acepta una pista de contexto y con ella deja de destrozar los
+ * tecnicismos: sin esto "usufructo" sale "uso fructo" y "art. 1255" sale
+ * "artículo mil doscientos cincuenta y cinco" o directamente mal. Y lo que
+ * el transcriptor escriba mal es exactamente lo que luego se cuenta como
+ * laguna que no existió.
+ */
+export function pistaDeTema(tema: Tema): string {
+  const titulos = tema.epigrafes
+    .filter((e) => e.borrado == null)
+    .map((e) => e.titulo)
+    .join(". ");
+  return `Oposición a Notarías, España. Tema ${tema.numero}: ${tema.titulo}. ${titulos}`;
+}
+
+/** ¿Hay texto de temario contra el que comparar? Sin esto no hay tarea. */
+export function hayTextoDeTema(tema: Tema): boolean {
+  return tema.epigrafes.some(
+    (e) => e.borrado == null && (e.texto ?? "").trim().length > 0,
+  );
+}
+
+/**
+ * Las dos columnas que se le ponen delante al modelo: el texto del tema y
+ * lo que el opositor recitó de verdad.
+ *
+ * La transcripción va ENTERA y sin trocear por epígrafes. Se podría partir
+ * con las marcas de tiempo, pero el transcriptor no siempre devuelve
+ * marcas de segmento, y un corte a destiempo parte una frase por la mitad y
+ * convierte media frase en una laguna inventada. Lo que sí se le da es el
+ * guion: qué epígrafes hubo, en qué orden y cuánto duró cada uno, que es
+ * suficiente para que alinee por contenido.
+ */
+export function construirComparacion(
+  cante: Cante,
+  tema: Tema,
+  transcripcion: TranscripcionCante,
+): string {
+  const l: string[] = [];
+  const epigrafes = tema.epigrafes
+    .filter((e) => e.borrado == null)
+    .sort((a, b) => a.orden - b.orden);
+
+  l.push(`# Texto del tema ${tema.numero} — ${tema.titulo}`);
+  l.push("Esto es lo que el opositor estudia. Es la única fuente válida.");
+  for (const e of epigrafes) {
+    l.push("");
+    l.push(`## ${e.titulo}`);
+    l.push((e.texto ?? "").trim() || "(este epígrafe no tiene texto guardado)");
+  }
+
+  l.push("");
+  l.push("# Guion del cante (medido en vivo)");
+  l.push(
+    `Duración total ${reloj(cante.segundos)}. Los fallos entre paréntesis los marcó el propio opositor mientras cantaba.`,
+  );
+  if (cante.epigrafes.length) {
+    for (const e of cante.epigrafes) {
+      const fallos = e.fallos.length ? ` (${e.fallos.join(", ")})` : "";
+      l.push(`- ${e.titulo} — ${reloj(e.segundos)}${fallos}`);
+    }
+  } else {
+    l.push("- (se cronometró el tema entero, sin desglose)");
+  }
+
+  l.push("");
+  l.push("# Transcripción de lo que dijo");
+  l.push(
+    "Transcripción automática, con los errores típicos de una máquina oyendo vocabulario jurídico.",
+  );
+  l.push("");
+  l.push(transcripcion.texto);
 
   return l.join("\n");
 }

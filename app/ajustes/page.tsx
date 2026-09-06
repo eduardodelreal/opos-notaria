@@ -14,6 +14,7 @@ import {
   useConfirmacion,
 } from "@/components/ui";
 import { AvisoSinCuenta, TarjetaSincronizacion } from "@/components/Sincronizacion";
+import { vaciarAudios } from "@/lib/audio/almacen";
 import type { Perfil } from "@/lib/data/types";
 
 export default function Ajustes() {
@@ -241,8 +242,14 @@ export default function Ajustes() {
               onClick={() =>
                 pedir(
                   "Borrar todo",
-                  "Se borran temas, cantes, sesiones, keypoints, notas y simulacros. No hay vuelta atrás. Descarga una copia antes si tienes dudas.",
-                  borrarTodo,
+                  "Se borran temas, cantes, sesiones, keypoints, notas, simulacros y las grabaciones de los cantes. No hay vuelta atrás. Descarga una copia antes si tienes dudas.",
+                  () => {
+                    // Los audios viven en su propia base de IndexedDB, así que
+                    // no se los lleva el borrado del expediente: hay que
+                    // vaciarlos a mano o quedarían megas huérfanos.
+                    void vaciarAudios();
+                    borrarTodo();
+                  },
                 )
               }
             >

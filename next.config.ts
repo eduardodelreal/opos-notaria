@@ -17,8 +17,12 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           {
             key: "Permissions-Policy",
-            // El microfono se activara cuando llegue la grabacion de cantes.
-            value: "camera=(), geolocation=(), microphone=()",
+            // El microfono SI, y solo para el propio origen: es lo que
+            // permite grabar el cante (lib/audio/). Sin `self` el navegador
+            // corta getUserMedia antes de preguntar nada, con un aviso de
+            // "Permissions policy violation" en consola y ningun dialogo.
+            // Camara y geolocalizacion siguen cerradas: no se usan.
+            value: "camera=(), geolocation=(), microphone=(self)",
           },
         ],
       },

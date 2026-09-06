@@ -499,6 +499,53 @@ console.log("\nsellado de actualizado");
       modelo: "m",
     }),
   );
+  // La grabación: la ficha del audio, la transcripción y la comparación son
+  // ediciones del cante como cualquier otra y tienen que mover su reloj, o el
+  // servidor las descartaría sin decir nada.
+  conSellado("setAudioCante", () =>
+    st().setAudioCante(cante.id, {
+      mime: "audio/webm",
+      bytes: 1234,
+      segundos: 42,
+      marcas: [{ epigrafeId: "e1", titulo: "Uno", desdeMs: 0, hastaMs: 42000 }],
+    }),
+  );
+  conSellado("setAudioCante (la subida rellena la ruta)", () =>
+    st().setAudioCante(cante.id, { path: "u/c.webm", subido: Date.now() }),
+  );
+  conSellado("setTranscripcionCante", () =>
+    st().setTranscripcionCante(cante.id, {
+      texto: "lo que dijo el opositor",
+      motor: "prueba/whisper",
+      generado: Date.now(),
+    }),
+  );
+  conSellado("setComparacionCante", () =>
+    st().setComparacionCante(cante.id, {
+      titular: "t",
+      cobertura: 70,
+      omisiones: [],
+      dichoDeMas: [],
+      epigrafesIncompletos: [],
+      literalidad: "l",
+      generado: Date.now(),
+      modelo: "m",
+    }),
+  );
+
+  prueba("setAudioCante funde y no pisa lo que ya había", () => {
+    const c = useStore.getState().cantes.find((x) => x.id === cante.id);
+    // Las dos llamadas de arriba: la primera puso las marcas y la duración,
+    // la segunda solo la ruta. Si `setAudioCante` reemplazara en vez de
+    // fundir, las marcas de epígrafe se habrían perdido al subir el audio y
+    // el reproductor se quedaría sin capítulos.
+    assert.equal(c.audio.path, "u/c.webm");
+    assert.equal(c.audio.mime, "audio/webm");
+    assert.equal(c.audio.segundos, 42);
+    assert.equal(c.audio.marcas.length, 1);
+    assert.ok(c.audio.subido > 0);
+  });
+
   conSellado("responderKeyPoint", () =>
     st().responderKeyPoint(st().keypoints[0].id, true),
   );

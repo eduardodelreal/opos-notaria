@@ -21,22 +21,50 @@ export function rutaIA(ruta: string): string {
   return base ? `${base}${ruta}` : ruta;
 }
 
-/** ¿Hay clave de API configurada en el servidor? */
-export function useIA() {
-  const [estado, setEstado] = React.useState<{
-    cargando: boolean;
-    disponible: boolean;
-    modelo: string;
-  }>({ cargando: true, disponible: false, modelo: "" });
+export interface EstadoIA {
+  cargando: boolean;
+  /** ¿Hay ANTHROPIC_API_KEY en el servidor? */
+  disponible: boolean;
+  modelo: string;
+  /**
+   * ¿Hay servicio de transcripción? Es OTRO proveedor: la API de Anthropic
+   * no acepta audio (lib/ai/transcripcion.ts), así que se configura aparte
+   * y puede faltar aunque el resto de la IA funcione.
+   */
+  transcripcion: boolean;
+  motorTranscripcion: string;
+}
+
+const IA_APAGADA: EstadoIA = {
+  cargando: false,
+  disponible: false,
+  modelo: "",
+  transcripcion: false,
+  motorTranscripcion: "",
+};
+
+/** Qué funciones de IA tiene encendidas esta instalación. */
+export function useIA(): EstadoIA {
+  const [estado, setEstado] = React.useState<EstadoIA>({
+    ...IA_APAGADA,
+    cargando: true,
+  });
 
   React.useEffect(() => {
     let vivo = true;
     fetch(rutaIA("/api/ai/estado"))
       .then((r) => r.json())
       .then((d) => {
-        if (vivo) setEstado({ cargando: false, disponible: !!d.disponible, modelo: d.modelo });
+        if (!vivo) return;
+        setEstado({
+          cargando: false,
+          disponible: !!d.disponible,
+          modelo: d.modelo ?? "",
+          transcripcion: !!d.transcripcion,
+          motorTranscripcion: d.motorTranscripcion ?? "",
+        });
       })
-      .catch(() => vivo && setEstado({ cargando: false, disponible: false, modelo: "" }));
+      .catch(() => vivo && setEstado(IA_APAGADA));
     return () => {
       vivo = false;
     };

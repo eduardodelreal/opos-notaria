@@ -51,6 +51,8 @@ El corazón del producto.
 - Al terminar: resumen con desglose por epígrafe **comparado contra tu cante anterior del mismo tema** (barra gris debajo), nota 0-10, si fue con preparador y su feedback.
 - Historial por tema con la evolución de la nota.
 
+**Graba el cante y te dice qué te saltaste.** Opcional y desactivable: el permiso del micrófono se pide antes de empezar, nunca a media recitación, y si no hay micrófono el cante va exactamente igual. La grabación se guarda en este dispositivo (IndexedDB), se reproduce con capítulos por epígrafe y, si tienes cuenta, sube sola a un bucket privado cuando haya red. Con un servicio de transcripción configurado se transcribe, y entonces viene lo que no tiene nadie: **la comparación con el texto de tu tema**, que te dice qué artículo no citaste, qué requisito de la lista te comiste y qué epígrafe recitaste a medias, **con la cita literal de tu temario que lo respalda**.
+
 ### Repaso espaciado
 
 No es Anki: **la unidad es el tema**, no la carta. El intervalo sale de cuatro variables reales —estado, dificultad que tú declaras, nota media de cante y vueltas dadas—, así que un tema dominado con nota 9 y cuatro vueltas aguanta cinco semanas y uno cantable con un 5 vuelve en menos de una.
@@ -97,6 +99,12 @@ pnpm dev
 
 Sin clave la app funciona **entera**; solo se apagan los botones de IA, que lo avisan en pantalla en vez de fallar.
 
+Para transcribir los cantes hace falta **otro** proveedor, porque la API de
+Anthropic no acepta audio (el porqué, con la comprobación, en
+[docs/ia.md](docs/ia.md)). Se configura con `TRANSCRIPCION_API_KEY` y, si no
+usas OpenAI, `TRANSCRIPCION_URL` y `TRANSCRIPCION_MODELO`. Sin eso se graba,
+se guarda y se escucha igual.
+
 ```bash
 pnpm build      # build de producción
 pnpm typecheck  # tsc --noEmit
@@ -124,6 +132,8 @@ Todas viven en `app/api/ai/*` y llaman a la API de Anthropic **desde el servidor
 | **Plan semanal** | Reparte la semana entre temas nuevos, repaso y cante, partiendo de las horas que **realmente** haces. | `/api/ai/plan` |
 | **Keypoints** | Extrae datos memorizables del texto de un tema. Se revisan antes de guardar; solo trabaja con el texto que le das. | `/api/ai/keypoints` |
 | **Dictamen** | Genera supuestos y corrige el tuyo con rúbrica de 5 apartados. | `/api/ai/dictamen` |
+| **Comparación del cante con el tema** | Recibe la transcripción de lo que dijiste y el texto de tus epígrafes, y devuelve **qué te saltaste**: artículos no citados, requisitos que faltan, epígrafes incompletos, cada uno con la cita literal del temario. Salida estructurada, se guarda junto al cante. | `/api/ai/comparar-cante` |
+| **Transcripción del cante** | **No es Anthropic**: su API no acepta audio. Va a un servicio compatible con Whisper que configuras tú (OpenAI, Groq o `whisper.cpp` en tu propia máquina). Sin él, grabar y escuchar el cante funciona igual. Ver [docs/ia.md](docs/ia.md). | `/api/ai/transcribir` |
 
 ### Personalización
 
@@ -174,7 +184,7 @@ Definido en `lib/data/types.ts`. La decisión estructural es que **todo cuelga d
 | `Materia`, `Tema`, `Epigrafe` | El programa, todo dado de alta por el usuario. |
 | `ProgresoTema` | Estado, segundos, dificultad, vueltas, nota media, próximo repaso. |
 | `Sesion` | Cada tramo cronometrado, con su tipo. |
-| `Cante` | Desglose por epígrafe con tiempos y fallos, nota, feedback y análisis de IA. |
+| `Cante` | Desglose por epígrafe con tiempos y fallos, nota, feedback, análisis de IA y, si se grabó, la ficha del audio (el binario va aparte, en `lib/audio/`), su transcripción y la comparación con el texto del tema. |
 | `KeyPoint` | Dato memorizable con su propio SRS. |
 | `Nota`, `Simulacro`, `MensajeChat` | Notas libres, simulacros y el hilo del chat. |
 
@@ -193,12 +203,15 @@ opos-notaria/
 │   ├── cante/                # Selector de tema
 │   │   └── vivo/             # Modo cante a pantalla completa
 │   ├── crono/  repaso/  simulacros/  estadisticas/  chat/  ajustes/
-│   └── api/ai/               # analisis-cante, chat, plan, keypoints, dictamen, estado
+│   └── api/ai/               # analisis-cante, comparar-cante, transcribir,
+│                             # chat, plan, keypoints, dictamen, estado
 ├── components/               # Shell, primitivos de UI, gráficos SVG, crono flotante
 ├── lib/
 │   ├── data/                 # types, materias, parser de importación, srs
 │   ├── store/                # Zustand + persistencia IndexedDB
 │   ├── ai/                   # cliente, prompts, ficha del opositor, hooks
+│   ├── audio/                # grabadora, almacén de blobs y subida a Storage
+│   ├── sync/                 # motor de sincronización (cola, fusión, transporte)
 │   └── utils/                # tiempo e ids
 ├── db/schema.sql             # Postgres/Supabase con RLS
 └── docs/
@@ -208,15 +221,14 @@ opos-notaria/
 
 ## Estado y siguientes pasos
 
-**Hecho y funcionando**: programa e importación, mural, fichas de tema con epígrafes, cronos con horas efectivas, modo cante completo, repaso espaciado, keypoints, simulacros (bombo y dictamen), estadísticas, las cinco funciones de IA, exportar/importar, claro y oscuro.
+**Hecho y funcionando**: programa e importación, mural, fichas de tema con epígrafes, cronos con horas efectivas, modo cante completo, **grabación del cante con transcripción y comparación contra el texto del tema**, repaso espaciado, keypoints, simulacros (bombo y dictamen), estadísticas, las funciones de IA, sincronización con Supabase, avisos, exportar/importar, claro y oscuro.
 
 **Lo siguiente, por orden de valor:**
 
-1. **Grabar el cante y transcribirlo** para comparar automáticamente contra el texto del tema. Es el diferencial que nadie tiene.
-2. **Sincronización con Supabase** (`db/schema.sql` ya está) para multi-dispositivo.
-3. **Recordatorios proactivos** por push o WhatsApp: *"llevas 11 días sin tocar Hipotecario"*.
-4. **Modo preparador**: dashboard con sus opositores. Es el canal de adquisición real — ganas al preparador y te trae doce usuarios.
-5. **App móvil** para cantar de paseo.
+1. **Sincronizar también la transcripción y la comparación.** Hoy se quedan en el dispositivo que las generó porque `cantes` no tiene columnas para ellas; el audio sí sube, así que en otro aparato se pueden regenerar. Son dos columnas `jsonb` y sus conversores (ver docs/sincronizacion.md §8).
+2. **Comparación por epígrafe con marcas de tiempo**, aprovechando los segmentos del transcriptor en vez de dejar que el modelo alinee por contenido.
+3. **Modo preparador**: dashboard con sus opositores. Es el canal de adquisición real — ganas al preparador y te trae doce usuarios.
+4. **App móvil** para cantar de paseo.
 
 ---
 

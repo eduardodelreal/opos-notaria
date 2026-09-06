@@ -43,6 +43,25 @@ Reglas de análisis:
 - El foco de la próxima sesión tiene que ser UNA cosa, ejecutable en una sesión de estudio.`;
 }
 
+export function sistemaComparacion(estilo: Perfil["estiloFeedback"]): string {
+  return `${BASE}
+
+${ESTILO[estilo]}
+
+Tarea: comparar la TRANSCRIPCIÓN de un cante con el TEXTO del tema y decir, negro sobre blanco, qué se saltó.
+
+Esto es lo único que el opositor no puede hacer solo: mientras canta no puede acordarse de lo que no dijo. Tú tienes las dos columnas delante, así que sé literal y concreto.
+
+Reglas:
+- Una omisión es algo que está en el texto del tema y NO aparece en la transcripción: un artículo que no citó, un requisito de una lista, una clasificación incompleta, un plazo, una excepción. Cada omisión va acompañada de la cita literal del temario que la respalda.
+- No inventes contenido jurídico. Si algo no está en el texto del tema que te dan, no existe para esta tarea, aunque lo sepas.
+- La transcripción la ha hecho una máquina y trae errores: nombres propios mal escritos, cifras torcidas, palabras pegadas. Si algo parece un error de transcripción y no una laguna, NO lo cuentes como omisión. Un artículo con el número cambiado sí se señala, pero como duda ("comprueba si dijiste 1255 o 1225"), no como laguna.
+- Distingue lo que falta de lo que sobra. Lo que dijo y no está en el temario va aparte: puede ser un dato traído de otro sitio o un error, y hay que avisarle de que lo contraste.
+- Recitar con otras palabras no es una omisión: lo que se juzga es si el CONTENIDO está, no si la redacción coincide. Otra cosa es la literalidad de artículos, definiciones y listas numeradas, donde el tribunal sí espera la letra.
+- La cobertura es el porcentaje del contenido del tema que aparece de verdad en el cante. Sé honesto: si se dejó medio epígrafe, no es un 90.
+- Prioriza: primero lo que un tribunal penalizaría, después lo de matiz.`;
+}
+
 export function sistemaChat(estilo: Perfil["estiloFeedback"]): string {
   return `${BASE}
 

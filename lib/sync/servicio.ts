@@ -1,5 +1,6 @@
 "use client";
 
+import { sincronizarAudios } from "../audio/subida";
 import { almacenSync, useStore } from "../store/store";
 import { haySupabase } from "../supabase/config";
 import { clienteNavegador } from "../supabase/navegador";
@@ -36,6 +37,8 @@ const REFRESCO = 5 * 60_000;
 interface Servicio {
   usuarioId: string;
   transporte: Transporte;
+  /** El mismo cliente del transporte, para Storage (audio de los cantes). */
+  cliente: ReturnType<typeof clienteNavegador>;
   reloj: ReturnType<typeof setInterval> | null;
   quitarEscuchas: (() => void) | null;
 }
@@ -92,6 +95,19 @@ export function sincronizarAhora(opciones: { manual?: boolean } = {}): Promise<v
       fallos = 0;
       esperaHasta = 0;
       ponerEstado({ fase: "sincronizado", mensaje: "", proximoIntento: 0 });
+
+      // El binario del cante va DESPUÉS de las filas y en su propio try
+      // (docs/sincronizacion.md §8): que no haya podido subir un audio de
+      // 5 MB con la wifi de la biblioteca no convierte en fallida una
+      // sincronización cuyo expediente ya está arriba. Se reintenta solo,
+      // con el backoff de lib/audio/subida.ts.
+      if (activo.cliente) {
+        try {
+          await sincronizarAudios(activo.cliente, activo.usuarioId);
+        } catch {
+          /* apuntado dentro; nunca degrada el estado de la sincronización */
+        }
+      }
     } catch (e) {
       fallos += 1;
       // Un expediente de otra cuenta no se arregla reintentando: hasta que
@@ -143,6 +159,7 @@ export function activarSincronizacion(usuarioId: string): () => void {
   servicio = {
     usuarioId,
     transporte: transporteSupabase(cliente, usuarioId),
+    cliente,
     reloj: null,
     quitarEscuchas: null,
   };

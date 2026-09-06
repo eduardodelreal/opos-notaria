@@ -38,10 +38,17 @@ import type {
        dominio. En las demás lo pone el default de la tabla en el insert, y
        al no ir en el payload el `do update` del upsert no lo toca: se
        escribe una vez y no se mueve más, que es el contrato.
-     · `cantes.audio_path`: hoy el modelo local no guarda la ruta del audio
-       (docs/sincronizacion.md §8 describe una cola de binarios que aún no
-       existe). Al quedarse fuera del payload, el valor que ya hubiera en el
-       servidor sobrevive a nuestros upserts en vez de borrarse.
+     · `cantes.audio_path` SÍ viaja (docs/sincronizacion.md §8), pero solo la
+       ruta: el binario sube por su cuenta a Storage (lib/audio/subida.ts) y
+       nunca por esta tabla. La ruta se manda tal cual la tiene el cliente;
+       como es determinista (`<uid>/<cante_id>.<ext>`), los dos dispositivos
+       calculan la misma y el upsert no la pisa con otra distinta.
+     · `Cante.transcripcion` y `Cante.comparacion` NO viajan: no tienen
+       columna en el esquema y las migraciones están cerradas. Se quedan en
+       el dispositivo que las generó; como el audio sí sube, en otro aparato
+       se pueden regenerar. La fusión las conserva al perder el LWW
+       (lib/sync/fusion.ts): una fila que no habla de un campo no puede
+       borrarlo.
      · las columnas de avisos de `perfiles` (0003) tampoco viajan aquí, por
        lo mismo: no están en el dominio y el upsert parcial las respeta.
    ============================================================ */
@@ -174,6 +181,8 @@ export interface FilaCante extends Sincronizable {
   con_preparador: boolean;
   feedback: string | null;
   analisis: AnalisisCante | null;
+  /** Ruta en el bucket `cantes-audio`. Solo la ruta (0001, 0002). */
+  audio_path: string | null;
 }
 
 export interface FilaKeyPoint extends Sincronizable {
@@ -509,6 +518,7 @@ export function aFilaCante(c: Cante, usuarioId: string): FilaCante {
     con_preparador: c.conPreparador ?? false,
     feedback: texto(c.feedback),
     analisis: c.analisis ?? null,
+    audio_path: c.audio?.path ?? null,
     updated_at: iso(c.actualizado),
     deleted_at: c.borrado == null ? null : iso(c.borrado),
   };
@@ -525,6 +535,9 @@ export function deFilaCante(f: FilaCante): Cante {
     conPreparador: f.con_preparador ?? false,
     feedback: f.feedback ?? undefined,
     analisis: f.analisis ?? undefined,
+    // La fila solo trae la ruta. El resto de la ficha del audio (mime,
+    // duración, marcas de epígrafe) es local y la conserva la fusión.
+    audio: f.audio_path ? { path: f.audio_path } : undefined,
     actualizado: relojFila(f),
     borrado: ms(f.deleted_at),
   };

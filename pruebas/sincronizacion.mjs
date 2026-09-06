@@ -386,6 +386,78 @@ prueba("las dos sesiones han viajado", () => {
 });
 
 /* ------------------------------------------------------------------
+   3 bis · El audio del cante (docs/sincronizacion.md §8)
+
+   Del audio solo viaja la RUTA, en `cantes.audio_path`. Lo que se prueba
+   aquí es lo que solo falla contra columnas de verdad: que la ruta llega a
+   su columna, que el otro dispositivo se entera de que hay grabación aunque
+   no tenga el binario, y —lo más fácil de romper— que una fila del servidor
+   que gana el last-write-wins NO borra lo que no tiene columna
+   (transcripción y comparación viven solo en local).
+   ------------------------------------------------------------------ */
+
+console.log("\n== audio del cante ==");
+
+const canteConAudio = vivos(estadoDe("portatil").cantes).find((c) => c.nota === 7);
+const rutaAudio = `${USUARIO}/${canteConAudio.id}.webm`;
+
+await en("portatil", (st) =>
+  st.setAudioCante(canteConAudio.id, {
+    path: rutaAudio,
+    mime: "audio/webm",
+    bytes: 512_000,
+    segundos: 2400,
+    subido: Date.now(),
+    marcas: [{ epigrafeId: "e", titulo: "Uno", desdeMs: 0, hastaMs: 2_400_000 }],
+  }),
+);
+await sincroniza("portatil", nube);
+
+prueba("la ruta del audio llega a su columna", () => {
+  const [{ path }] = enLaNube(
+    `select jsonb_build_object('path', audio_path) from public.cantes where id = '${canteConAudio.id}'`,
+  );
+  assert.equal(path, rutaAudio);
+});
+
+await sincroniza("movil", nube);
+
+prueba("el otro dispositivo se entera de que hay grabación", () => {
+  const c = vivos(estadoDe("movil").cantes).find((x) => x.id === canteConAudio.id);
+  assert.equal(c.audio.path, rutaAudio, "la ruta no ha bajado");
+  // El binario NO viaja por la tabla, y las marcas de epígrafe tampoco:
+  // son locales del aparato que grabó.
+  assert.equal(c.audio.marcas, undefined);
+});
+
+// El móvil se saca una transcripción (no tiene columna: es local) y la sube
+// junto al resto de la fila; después el portátil edita el cante MÁS TARDE y
+// gana el arbitraje.
+await en("movil", (st) =>
+  st.setTranscripcionCante(canteConAudio.id, {
+    texto: "lo que dijo el opositor en el cante",
+    motor: "prueba/whisper",
+    generado: Date.now(),
+  }),
+);
+await sincroniza("movil", nube);
+await espera(5);
+await en("portatil", (st) => st.updateCante(canteConAudio.id, { nota: 8 }));
+await sincroniza("portatil", nube);
+await sincroniza("movil", nube);
+
+prueba("perder el arbitraje no borra la transcripción local", () => {
+  const c = vivos(estadoDe("movil").cantes).find((x) => x.id === canteConAudio.id);
+  assert.equal(c.nota, 8, "no ha ganado la edición más reciente");
+  assert.equal(
+    c.transcripcion?.texto,
+    "lo que dijo el opositor en el cante",
+    "la fila del servidor se ha llevado por delante la transcripción",
+  );
+  assert.equal(c.audio.path, rutaAudio, "y de paso ha perdido la ruta del audio");
+});
+
+/* ------------------------------------------------------------------
    4 · Conflicto en una entidad mutable: gana el más reciente
    ------------------------------------------------------------------ */
 

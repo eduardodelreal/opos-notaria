@@ -59,6 +59,27 @@ Las sesiones no se pueden borrar desde la interfaz. Un histórico que se puede
 maquillar no sirve para medir. Los cantes sí, porque un cante mal registrado
 (crono olvidado corriendo) ensucia las medias.
 
+### 7. La grabación del cante es un extra, nunca un requisito
+
+Grabar el cante y compararlo con el texto del tema es lo que ningún
+competidor tiene: le dice al opositor, negro sobre blanco, **qué se saltó
+literalmente**, que es justo lo que no puede ver mientras canta.
+
+Pero el cante manda sobre la grabación, no al revés. De ahí las reglas duras:
+
+- El permiso del micrófono se pide **antes** de empezar. Un diálogo del
+  navegador a media recitación arruina una toma de diez minutos que no se va
+  a repetir.
+- Durante el cante, ninguna operación de audio espera a nada: marcar un
+  epígrafe es un `push` a un array.
+- Si no hay micrófono, si el navegador no sabe grabar o si el opositor dice
+  que no, el cante funciona **exactamente** igual que sin esta función. No
+  hay una sola rama en la que la grabación impida cantar.
+- La comparación no inventa: cada omisión va con la cita literal del temario
+  que la respalda, y lo que huele a error del transcriptor no se cuenta como
+  laguna. Decirle a alguien que se dejó un artículo que sí dijo es peor que
+  no decirle nada.
+
 ---
 
 ## Técnicas

@@ -38,7 +38,9 @@ import {
 } from "./migraciones";
 import type {
   AnalisisCante,
+  AudioCante,
   Cante,
+  ComparacionCante,
   CanteEpigrafe,
   Epigrafe,
   EstadoTema,
@@ -52,6 +54,7 @@ import type {
   Simulacro,
   Tema,
   TipoSesion,
+  TranscripcionCante,
   Vuelta,
 } from "../data/types";
 
@@ -143,6 +146,10 @@ interface Acciones {
   ) => Cante;
   updateCante: (id: string, parcial: Partial<Cante>) => void;
   setAnalisisCante: (id: string, analisis: AnalisisCante) => void;
+  /** Ficha de la grabación. El binario va aparte (lib/audio/almacen.ts). */
+  setAudioCante: (id: string, audio: Partial<AudioCante>) => void;
+  setTranscripcionCante: (id: string, transcripcion: TranscripcionCante) => void;
+  setComparacionCante: (id: string, comparacion: ComparacionCante) => void;
   removeCante: (id: string) => void;
   cantesDe: (temaId: string) => Cante[];
 
@@ -738,6 +745,25 @@ export const useStore = create<Store>()(
       setAnalisisCante: (id, analisis) =>
         escribir((s) => ({
           cantes: s.cantes.map((c) => (c.id === id ? { ...c, analisis } : c)),
+        })),
+
+      // Fusiona en vez de reemplazar: la subida rellena `path` y `subido`
+      // sin tener por qué conocer las marcas de epígrafe que puso el cante.
+      setAudioCante: (id, audio) =>
+        escribir((s) => ({
+          cantes: s.cantes.map((c) =>
+            c.id === id ? { ...c, audio: { ...c.audio, ...audio } } : c,
+          ),
+        })),
+
+      setTranscripcionCante: (id, transcripcion) =>
+        escribir((s) => ({
+          cantes: s.cantes.map((c) => (c.id === id ? { ...c, transcripcion } : c)),
+        })),
+
+      setComparacionCante: (id, comparacion) =>
+        escribir((s) => ({
+          cantes: s.cantes.map((c) => (c.id === id ? { ...c, comparacion } : c)),
         })),
 
       removeCante: (id) =>
