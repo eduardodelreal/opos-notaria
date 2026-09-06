@@ -1166,6 +1166,125 @@ end;
 $$;
 
 -- ============================================================================
+-- 9ter · transcripción y comparación del cante (0005)
+--
+-- Las dos columnas que le faltaban a `cantes` para que el trabajo del
+-- transcriptor y del modelo saliera del aparato que lo generó. Aquí se
+-- comprueba lo que solo falla contra columnas de verdad: que existen, que
+-- guardan y devuelven el documento entero, y —lo importante— que el arbitraje
+-- last-write-wins las trata como al resto de la fila.
+-- ============================================================================
+
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+
+do $$
+declare
+  cid uuid := pruebas.id('aaaa1111', 201);
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  tipo_t text;
+  tipo_c text;
+  t0 timestamptz;
+  tr jsonb;
+  cp jsonb;
+begin
+  select data_type into tipo_t from information_schema.columns
+   where table_schema = 'public' and table_name = 'cantes' and column_name = 'transcripcion';
+  select data_type into tipo_c from information_schema.columns
+   where table_schema = 'public' and table_name = 'cantes' and column_name = 'comparacion';
+  perform pruebas.comprobar('cante0005', 'cantes.transcripcion existe y es jsonb',
+    tipo_t = 'jsonb', 'tipo = ' || coalesce(tipo_t, '(no existe)'));
+  perform pruebas.comprobar('cante0005', 'cantes.comparacion existe y es jsonb',
+    tipo_c = 'jsonb', 'tipo = ' || coalesce(tipo_c, '(no existe)'));
+
+  -- Un cante sin transcripción es una fila legítima: la grabación puede estar
+  -- pendiente de transcribir, o no haber grabación.
+  insert into public.cantes (id, usuario_id, tema_id, segundos, nota)
+    values (cid, a, pruebas.id('aaaa1111', 2), 600, 8);
+  select transcripcion, comparacion into tr, cp from public.cantes where id = cid;
+  perform pruebas.comprobar('cante0005', 'nacen a null (todavía no hay nada)',
+    tr is null and cp is null, 'transcripcion=' || coalesce(tr::text, 'null'));
+
+  -- El documento entra y sale entero, anidados incluidos: es lo que
+  -- `deFilaCante` vuelve a montar en el cliente.
+  update public.cantes
+     set transcripcion = '{"texto":"artículo 1857","motor":"prueba/whisper","generado":1,"segundos":600}'::jsonb,
+         comparacion   = '{"titular":"floja","cobertura":41,"omisiones":[{"epigrafe":"Concepto","tipo":"articulo","falta":"1875 CC","gravedad":"alta"}],"dichoDeMas":[],"epigrafesIncompletos":[],"literalidad":"parafrasea","generado":2,"modelo":"prueba/modelo"}'::jsonb
+   where id = cid;
+  select transcripcion, comparacion, updated_at into tr, cp, t0 from public.cantes where id = cid;
+  perform pruebas.comprobar('cante0005', 'la transcripción viaja entera',
+    tr->>'texto' = 'artículo 1857' and (tr->>'segundos')::int = 600, 'tr = ' || tr::text);
+  perform pruebas.comprobar('cante0005', 'la comparación conserva sus omisiones anidadas',
+    (cp->'omisiones'->0->>'falta') = '1875 CC' and (cp->>'cobertura')::int = 41,
+    'cp = ' || left(cp::text, 120));
+
+  -- LWW: una escritura más vieja no puede llevárselas por delante. Es el caso
+  -- del móvil que estuvo sin cobertura y sube un cante sin analizar.
+  update public.cantes
+     set transcripcion = null, comparacion = null, nota = 3,
+         updated_at = t0 - interval '1 day'
+   where id = cid;
+  select transcripcion, comparacion into tr, cp from public.cantes where id = cid;
+  perform pruebas.comprobar('cante0005', 'una escritura perdedora no borra la transcripción',
+    tr is not null and cp is not null, 'transcripcion=' || coalesce(tr::text, 'null'));
+
+  -- Y una ganadora sí manda, también para vaciarlas: la granularidad sigue
+  -- siendo la fila entera (§4), aquí no hay merge por campos.
+  update public.cantes
+     set transcripcion = null, nota = 3, updated_at = t0 + interval '1 minute'
+   where id = cid;
+  select transcripcion into tr from public.cantes where id = cid;
+  perform pruebas.comprobar('cante0005', 'una escritura ganadora sí puede vaciarla',
+    tr is null, 'transcripcion=' || coalesce(tr::text, 'null'));
+end;
+$$;
+commit;
+
+-- ============================================================================
+-- 9quater · El `creado_at` del servidor, que es de donde sale el desfase
+--
+-- La corrección de deriva de relojes (lib/sync/reloj.ts, docs §4) se apoya en
+-- una sola cosa: que `creado_at` lo pone el reloj del SERVIDOR al insertar,
+-- aunque el cliente mande su propio `updated_at`, y que el RETURNING se lo
+-- devuelve. Si algún día el esquema dejara de cumplirlo, la estimación del
+-- desfase se iría a cero en silencio y nadie se enteraría. Por eso está aquí.
+-- ============================================================================
+
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+
+do $$
+declare
+  mid uuid := pruebas.id('aaaa1111', 202);
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  futuro timestamptz := now() + interval '10 minutes';
+  creado timestamptz;
+  antes timestamptz := now();
+  devuelto timestamptz;
+begin
+  -- Un móvil con el reloj diez minutos adelantado inserta una fila.
+  insert into public.materias (id, usuario_id, nombre, updated_at)
+    values (mid, a, 'reloj adelantado 0005', futuro)
+  returning creado_at into devuelto;
+
+  perform pruebas.comprobar('desfase', 'el RETURNING del insert devuelve creado_at',
+    devuelto is not null, 'creado_at = ' || coalesce(devuelto::text, 'null'));
+  perform pruebas.comprobar('desfase', 'creado_at lo pone el servidor, no el cliente adelantado',
+    devuelto < futuro and devuelto >= antes,
+    'creado_at = ' || devuelto || ', marca del cliente = ' || futuro);
+
+  -- Y un update posterior no lo mueve: la medida siempre es "cuándo nació la
+  -- fila según el servidor", nunca la marca de nadie más.
+  update public.materias set nombre = 'editada', updated_at = futuro + interval '1 minute'
+   where id = mid;
+  select creado_at into creado from public.materias where id = mid;
+  perform pruebas.comprobar('desfase', 'creado_at no se mueve con los updates',
+    creado = devuelto, creado || ' vs ' || devuelto);
+end;
+$$;
+commit;
+
+-- ============================================================================
 -- 10 · Resumen
 -- ============================================================================
 

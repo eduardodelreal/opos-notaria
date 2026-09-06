@@ -154,10 +154,88 @@ existe.
 ### Deriva de relojes
 
 El last-write-wins depende de que los relojes de los dispositivos sean
-comparables. Un móvil con la hora mal puesta gana o pierde todos los conflictos.
-Mitigación barata y suficiente: al iniciar sesión, calcula el desfase con el
-servidor (`select now()`) y aplícalo a los `updated_at` que generes. Si el
-desfase es menor de unos segundos, ignóralo.
+comparables, y no lo son: la marca la pone el aparato. Un móvil con la hora diez
+minutos adelantada gana **todos** los conflictos; uno atrasado los pierde todos.
+Y hay algo peor que perder un conflicto: `updated_at` es también el cursor del
+pull, así que una fila insertada con una marca muy en el pasado puede quedar por
+debajo del cursor de otro dispositivo, **que entonces no la ve nunca**. El
+`greatest()` del trigger cubre los `update`; la primera escritura de una fila es
+un `insert` y ahí no hay trigger que la salve.
+
+Está resuelto en `lib/sync/reloj.ts`, y sin tocar la base ni añadir una RPC.
+
+**De dónde sale la medida.** El upsert ya pide `.select()` para adoptar la fila
+ganadora, y lo que devuelve es la fila **entera**, `creado_at` incluido. Y
+`creado_at` es la única columna de tiempo que en estas tablas nunca sale del
+cliente: la pone el `default now()` de la base al insertar y no se toca más. Con
+el reloj local justo antes (`t0`) y justo después (`t1`) de la petición:
+
+```
+muestra = max(creado_at devuelto) − (t0 + t1) / 2
+```
+
+El punto medio es lo que descuenta la latencia: `creado_at` se sella dentro de la
+transacción, a mitad del viaje. El error que queda está acotado por media ida y
+vuelta, décimas de segundo.
+
+**Por qué es robusto.** Todo cuelga de una asimetría: `max(creado_at)` nunca
+puede ir por delante del reloj del servidor. Si el lote insertó alguna fila, la
+medida es exacta; si era todo `update`, sale corta. Es decir, **toda muestra es
+una cota inferior del desfase**, nunca una sobreestimación. De ahí:
+
+- Un lote sin filas nuevas se reconoce sin ambigüedad —su `max(creado_at)` no es
+  más nuevo que el mayor ya visto— y su medida se tira entera.
+- Entre las que quedan, una muestra **por encima** de la estimación es prueba
+  directa de que la estimación se quedaba corta: se adopta sin confirmar.
+  Bajarla, en cambio, exige dos medidas coherentes.
+
+Los tres casos feos:
+
+| Caso | Qué hace |
+| --- | --- |
+| La primera medida de todas | No se adopta a ciegas. Si ese primer lote fuera de puros `update`, su `creado_at` podría ser de hace años (el perfil lo crea el alta) y el aparato se creería años atrasado, sellándolo todo por debajo del cursor de los demás. Abre candidatura y espera una segunda que diga lo mismo. |
+| Un desfase que cambia (el opositor pone el móvil en hora) | Las medidas caen de golpe. Tampoco se hace caso a la primera: se pide otra coherente. Mientras tanto se sella con el desfase de ayer, que es lo mejor que se sabía. |
+| Latencia confundida con desfase | El punto medio la descuenta, las respuestas de más de 10 s se tiran, y lo que quede se lo come la zona muerta: por debajo de **2 segundos el desfase no se aplica**. |
+
+**Dónde se aplica.** En el embudo `escribir()` del store, que es por donde pasan
+todas las escrituras de entidades sincronizables: el sello (`lib/store/sellado.ts`)
+usa `Date.now() + desfase` en vez de `Date.now()`, y una acción nueva no tiene que
+acordarse de nada. La excepción es `sesiones`, la única tabla cuyo `updated_at` no
+sale del sellado —`Sesion` no tiene campo `actualizado` porque no hay nada que
+arbitrar—: ahí lo aplica `aFilaSesion` al construir la fila.
+
+Lo que **no** se corrige son los instantes que son dato y no reloj de
+sincronización: `Sesion.inicio`, `Cante.fecha`, `proximoRepaso`. Se comparan
+contra el reloj local del propio aparato y moverlos descuadraría lo que el
+opositor ve en su histórico.
+
+**Y un cinturón aparte, en el cursor del pull.** `ultimoPull` nunca avanza por
+delante de ahora, aunque la fila recibida venga sellada en el futuro. Sin ese
+tope, un solo aparato con la hora adelantada —o una versión vieja de la app, que
+no corrige nada— dejaría a los demás sin ver nada durante todo el desfase. Lo que
+cuesta es volver a bajar esa fila en cada ciclo mientras tanto, y bajar dos veces
+la misma fila no hace nada.
+
+**Límites, que los tiene:**
+
+- **Lo escrito antes de la primera sincronización no se corrige.** Sin red no hay
+  contra qué medir. Un aparato que lleva semanas trabajando offline sube todo ese
+  trabajo con su marca torcida. El tope del cursor evita que eso ciegue a los
+  demás, pero esas filas siguen ganando o perdiendo conflictos por el reloj.
+- **Hacen falta dos lotes con inserciones para tener estimación.** Un dispositivo
+  recién instalado sobre una cuenta con datos no tiene nada que insertar hasta que
+  el opositor crea algo; hasta entonces se comporta como antes de todo esto.
+- **La resolución es media ida y vuelta.** El desfase se estima con ese error,
+  así que dos ediciones de la misma fila separadas por menos que la latencia
+  siguen sin poder ordenarse. Para arbitrar escrituras de una persona en dos
+  aparatos, sobra.
+- **La estimación se refresca solo cuando hay push.** Un aparato que solo lee
+  nunca la actualiza. No importa: si no escribe, no sella nada.
+- Se estima el desfase, no se sincroniza el reloj: no hay filtro de Marzullo ni
+  varias muestras por petición como haría NTP. Para arbitrar escrituras humanas,
+  con un margen de segundos sobra.
+- El desfase vive en las marcas de sincronización, así que **«Borrar todo» y el
+  cambio de cuenta lo reinician**. Se vuelve a medir en el primer push.
 
 ---
 
@@ -319,25 +397,41 @@ Un 404 al firmar significa "grabación pendiente de subir", no error.
 - **Purga.** Un cante enterrado se lleva su binario por delante, en local y en
   Storage. Aquí sí hay borrado físico: la tumba que viaja es la fila.
 
-### Lo que NO viaja, y por qué
+### Transcripción y comparación
 
-`Cante.transcripcion` y `Cante.comparacion` **no tienen columna** en el
-esquema, y las migraciones están cerradas. Se quedan en el dispositivo que las
-generó. Como el audio sí sube, en otro aparato se pueden volver a generar
-desde la grabación; cuesta una llamada al transcriptor, no el trabajo del
-opositor.
+`Cante.transcripcion` y `Cante.comparacion` **sí viajan**, en dos columnas
+`jsonb` de `cantes` que añade `0005_transcripcion_cante.sql`.
 
-Lo que sí hubo que arreglar para que esto no fuera una pérdida silenciosa: la
-fusión **no puede borrar un campo del que la fila del servidor no habla**.
-Ganar el last-write-wins significa "mi versión de lo que está en la tabla es
-más nueva", no "lo que tú tienes de más ya no vale". `fundirCante()` en
-`lib/sync/fusion.ts` conserva transcripción, comparación y los metadatos
-locales del audio cuando gana el remoto. Hay una comprobación de esto en
-`pruebas/sincronizacion.mjs`, contra Postgres.
+Antes no tenían columna y se quedaban en el aparato que las generó. No era
+pérdida de datos —el audio sube igual, así que en otro dispositivo se pueden
+regenerar— pero sí de dinero: regenerarlas cuesta transcribir el cante entero
+y una llamada al modelo, **por cada aparato** en el que el opositor abra ese
+cante. Con tres dispositivos y un cante al día, se paga tres veces lo mismo
+durante toda la oposición.
 
-Si algún día se abren las migraciones, dos columnas `jsonb` en `cantes`
-(`transcripcion`, `comparacion`) y sus conversores en `lib/sync/tablas.ts`
-cierran el hueco sin tocar nada más.
+Van en `jsonb` y no en tablas hijas por lo mismo que `epigrafes` y `analisis`:
+son documentos inmutables que se leen enteros y no se filtran por dentro. Una
+tabla hija solo añadiría filas que sincronizar.
+
+Ahora bien, tener columna abre un riesgo que antes no existía: **un
+dispositivo que no las tiene puede pisarlas con un hueco al ganar el
+arbitraje**. Por eso `fundirCante()` (`lib/sync/fusion.ts`) hace dos cosas:
+
+1. Conserva lo local cuando lo que baja es `null`. Estos dos campos solo van
+   de ausente a presente —no hay acción en el store que los borre—, así que un
+   `null` que baja no significa "esto ya no vale" sino "el que escribió esa
+   fila todavía no los tenía".
+2. **Reencola** la fila cuando ha conservado algo. Quedárselo sin devolverlo
+   dejaría el análisis en un solo aparato y el otro seguiría regenerándolo.
+   El reencolado termina solo: al subirlo, la fila del servidor ya lo trae y
+   la fusión siguiente no encuentra nada que devolver.
+
+Lo que sigue **sin** tener columna es el resto de la ficha del audio: mime,
+duración y las marcas de epígrafe son de este aparato, y la fusión los
+conserva por la misma razón pero no tiene adónde devolverlos.
+
+Hay comprobaciones de todo esto en `pruebas/sincronizacion.mjs` (contra
+Postgres) y en `db/pruebas/pruebas.sql` (bloque `cante0005`).
 
 ---
 
@@ -447,3 +541,5 @@ las filas a sincronizar para arreglar un problema que no se da.
 - [ ] Recalcular `segundos` y `nota_media` desde `sesiones`/`cantes` tras cada pull (§6).
 - [ ] Borrado = `deleted_at`, y filtro `deleted_at is null` en todos los selectores.
 - [x] Audio en cola aparte, después de la fila (§8). Hecho en `lib/audio/`.
+- [x] Transcripción y comparación del cante con columna propia (§8, migración 0005).
+- [x] Corrección de la deriva de relojes al sellar (§4). Hecho en `lib/sync/reloj.ts`.

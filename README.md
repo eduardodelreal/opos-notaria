@@ -225,10 +225,9 @@ opos-notaria/
 
 **Lo siguiente, por orden de valor:**
 
-1. **Sincronizar también la transcripción y la comparación.** Hoy se quedan en el dispositivo que las generó porque `cantes` no tiene columnas para ellas; el audio sí sube, así que en otro aparato se pueden regenerar. Son dos columnas `jsonb` y sus conversores (ver docs/sincronizacion.md §8).
-2. **Comparación por epígrafe con marcas de tiempo**, aprovechando los segmentos del transcriptor en vez de dejar que el modelo alinee por contenido.
-3. **Modo preparador**: dashboard con sus opositores. Es el canal de adquisición real — ganas al preparador y te trae doce usuarios.
-4. **App móvil** para cantar de paseo.
+1. **Comparación por epígrafe con marcas de tiempo**, aprovechando los segmentos del transcriptor en vez de dejar que el modelo alinee por contenido.
+2. **Modo preparador**: dashboard con sus opositores. Es el canal de adquisición real — ganas al preparador y te trae doce usuarios.
+3. **App móvil** para cantar de paseo.
 
 ---
 

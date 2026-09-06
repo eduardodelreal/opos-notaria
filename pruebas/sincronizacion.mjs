@@ -159,6 +159,15 @@ const CLAVES = [
 
 const aparatos = new Map();
 
+/**
+ * Desvío del reloj de cada aparato, en ms. Es lo que permite montar el caso
+ * de la deriva de relojes con el código real: mientras corre el turno de un
+ * dispositivo, `Date.now()` devuelve SU hora, que es lo que ven el sellado
+ * del store y el motor. Nada del código bajo prueba se entera.
+ */
+const desvios = new Map();
+const RELOJ_REAL = Date.now;
+
 function instantanea() {
   const s = useStore.getState();
   const o = {};
@@ -173,9 +182,12 @@ function instalar(nombre) {
 
 async function en(nombre, fn) {
   useStore.setState(structuredClone(aparatos.get(nombre)));
+  const desvio = desvios.get(nombre) ?? 0;
+  if (desvio) Date.now = () => RELOJ_REAL() + desvio;
   try {
     return await fn(useStore.getState());
   } finally {
+    Date.now = RELOJ_REAL;
     // También si la acción ha fallado: un ciclo de sincronización que se
     // corta a la mitad deja el aparato como esté, y eso es justo lo que
     // hay que poder comprobar.
@@ -224,6 +236,9 @@ const { sincronizar } = await import("../lib/sync/motor.ts");
 const { CONFLICTO } = await import("../lib/sync/tablas.ts");
 const { temasVivos, vivos, vivosMapa } = await import("../lib/data/vivos.ts");
 const { derivarProgresos } = await import("../lib/data/derivados.ts");
+const { desfaseAplicable, medirDesfase, muestraDeRespuesta } = await import(
+  "../lib/sync/reloj.ts"
+);
 
 const control = {};
 const nube = transportePsql(USUARIO, control);
@@ -455,6 +470,85 @@ prueba("perder el arbitraje no borra la transcripción local", () => {
     "la fila del servidor se ha llevado por delante la transcripción",
   );
   assert.equal(c.audio.path, rutaAudio, "y de paso ha perdido la ruta del audio");
+});
+
+/* ------------------------------------------------------------------
+   3 ter · Transcripción y comparación, ya con columna (0005)
+
+   Antes se quedaban en el aparato que las generó y en el otro había que
+   regenerarlas, pagando otra vez el transcriptor y el modelo. Ahora viajan.
+   Y como viajan, aparece un riesgo que antes no existía: un dispositivo que
+   NO las tiene puede pisarlas con un hueco al ganar el arbitraje. Eso es
+   justo lo que acaba de pasar arriba —el portátil ganó con la nota 8 y su
+   transcripción vacía—, así que aquí se comprueba la reparación: el que la
+   conserva se la devuelve al servidor sin que nadie se lo pida.
+   ------------------------------------------------------------------ */
+
+console.log("\n== transcripción y comparación (0005) ==");
+
+prueba("el aparato que conserva la transcripción se la vuelve a encolar", () => {
+  assert.ok(
+    estadoDe("movil").cola[`cantes:${canteConAudio.id}`],
+    "el cante no se ha reencolado: la transcripción se quedaría solo en el móvil",
+  );
+});
+
+await sincroniza("movil", nube);
+
+prueba("y se la devuelve al servidor", () => {
+  const [fila] = enLaNube(
+    `select to_jsonb(t.*) from public.cantes t where t.id = '${canteConAudio.id}'`,
+  );
+  assert.equal(
+    fila.transcripcion?.texto,
+    "lo que dijo el opositor en el cante",
+    "la columna sigue vacía: el otro dispositivo tendría que transcribir otra vez",
+  );
+  assert.equal(fila.nota, 8, "de paso se ha llevado por delante la edición ganadora");
+});
+
+// Ahora la comparación contra el texto del tema, que es la otra columna nueva
+// y la que más cuesta: es una llamada al modelo con el tema entero delante.
+await en("movil", (st) =>
+  st.setComparacionCante(canteConAudio.id, {
+    titular: "Se deja los requisitos del 1875",
+    cobertura: 62,
+    omisiones: [
+      { epigrafe: "Caracteres", tipo: "articulo", falta: "1875 CC", gravedad: "alta" },
+    ],
+    dichoDeMas: [],
+    epigrafesIncompletos: [{ epigrafe: "Concepto", cobertura: 70, nota: "flojo" }],
+    literalidad: "parafrasea de más",
+    generado: Date.now(),
+    modelo: "prueba/modelo",
+  }),
+);
+await sincroniza("movil", nube);
+await sincroniza("portatil", nube);
+
+prueba("la comparación llega entera al otro dispositivo", () => {
+  const c = vivos(estadoDe("portatil").cantes).find((x) => x.id === canteConAudio.id);
+  assert.equal(c.comparacion?.cobertura, 62, "la comparación no ha bajado");
+  assert.equal(
+    c.comparacion.omisiones[0].falta,
+    "1875 CC",
+    "el documento anidado no ha sobrevivido al viaje por jsonb",
+  );
+  assert.equal(
+    c.transcripcion?.texto,
+    "lo que dijo el opositor en el cante",
+    "la transcripción tampoco ha bajado",
+  );
+});
+
+prueba("nadie se queda reencolando el cante para siempre", () => {
+  for (const nombre of ["portatil", "movil"]) {
+    assert.equal(
+      estadoDe(nombre).cola[`cantes:${canteConAudio.id}`],
+      undefined,
+      `${nombre}: el cante sigue en la cola, se estarían reenviando sin fin`,
+    );
+  }
 });
 
 /* ------------------------------------------------------------------
@@ -731,6 +825,225 @@ prueba("lo que ya había en la nube sigue intacto", () => {
     `select jsonb_build_object('n', count(*)) from public.materias where deleted_at is null`,
   );
   assert.equal(n, 6, "las materias de la cuenta se han duplicado o borrado");
+});
+
+/* ------------------------------------------------------------------
+   9 bis · Deriva de relojes (docs/sincronizacion.md §4)
+
+   El arbitraje compara marcas de tiempo que pone el reloj del aparato. Un
+   móvil con la hora ocho minutos adelantada ganaría TODOS los conflictos y
+   sellaría sus filas ocho minutos en el futuro. Aquí se monta ese aparato de
+   verdad —durante su turno `Date.now()` miente— y se comprueba lo único que
+   importa: que no gana ni pierde por el reloj, sino por el orden real de las
+   escrituras.
+   ------------------------------------------------------------------ */
+
+console.log("\n== deriva de relojes ==");
+
+const DESVIO = 8 * 60_000;
+
+instalar("reloj");
+desvios.set("reloj", DESVIO);
+
+// Trabajo propio antes de entrar en la cuenta, como cualquier instalación que
+// lleva días sin cuenta: así el primer push lleva inserciones de verdad, que
+// es cuando el `creado_at` que devuelve el servidor mide el desfase.
+const suyo = await en("reloj", (st) => {
+  const materia = useStore.getState().materias[1];
+  const tema = st.addTema(materia.id, 3, "Tema del aparato desviado");
+  st.guardarCante({
+    temaId: tema.id,
+    segundos: 600,
+    epigrafes: [],
+    conPreparador: false,
+    nota: 6,
+  });
+  return tema;
+});
+
+await sincroniza("reloj", nube);
+
+prueba("el aparato desviado mide su desfase contra el servidor", () => {
+  const d = estadoDe("reloj").sincro.desfaseReloj;
+  assert.ok(
+    Math.abs(d + DESVIO) < 15_000,
+    `desfase medido ${Math.round(d)} ms, se esperaba cerca de ${-DESVIO}`,
+  );
+});
+
+// Lo que escribe DESPUÉS de haber medido ya va sellado con la hora buena.
+// Lo de antes no: sin red no hay contra qué medir, y eso es un límite del
+// método, no un fallo (docs/sincronizacion.md §4).
+const despues = await en("reloj", (st) =>
+  st.addTema(useStore.getState().materias[1].id, 4, "Tema escrito ya con desfase medido"),
+);
+await sincroniza("reloj", nube);
+
+prueba("sella lo que escribe después con la hora del servidor, no con la suya", () => {
+  const tema = temasVivos(estadoDe("reloj").temas).find((t) => t.id === despues.id);
+  const fuera = Math.round((tema.actualizado - RELOJ_REAL()) / 1000);
+  assert.ok(fuera < 60, `el tema quedó sellado ${fuera} s en el futuro`);
+  const [fila] = enLaNube(
+    `select to_jsonb(t.*) from public.temas t where t.id = '${despues.id}'`,
+  );
+  assert.ok(
+    Date.parse(fila.updated_at) < RELOJ_REAL() + 60_000,
+    `en la nube quedó con updated_at = ${fila.updated_at}`,
+  );
+});
+
+await sincroniza("portatil", nube);
+
+prueba("una fila sellada en el futuro no deja ciego el cursor del otro aparato", () => {
+  // El primer tema del aparato desviado sí subió con la marca mala (aún no
+  // había medido). Si el cursor del portátil se hubiera ido con ella, el
+  // portátil no vería nada de nadie durante los ocho minutos siguientes.
+  const cursor = estadoDe("portatil").sincro.ultimoPull;
+  assert.ok(
+    cursor <= RELOJ_REAL(),
+    `cursor en el futuro: ${new Date(cursor).toISOString()}`,
+  );
+  assert.ok(
+    temasVivos(estadoDe("portatil").temas).some((t) => t.id === suyo.id),
+    "el tema del aparato desviado no ha llegado al portátil",
+  );
+});
+
+// Una nota compartida sobre la que pelearse.
+await en("portatil", (st) => st.addNota(suyo.id, "borrador"));
+await sincroniza("portatil", nube);
+await sincroniza("reloj", nube);
+
+const notaPelea = vivos(estadoDe("portatil").notas).find((n) => n.texto === "borrador").id;
+
+// (a) el desviado escribe ANTES: tiene que perder, aunque su reloj diga que
+//     va ocho minutos por delante.
+//
+// La separación entre las dos escrituras es de un segundo a propósito: el
+// desfase se estima con un error de media ida y vuelta, así que dos ediciones
+// más juntas que eso no se pueden ordenar y la prueba sería intermitente. Es
+// un límite real del método, no del andamiaje (docs/sincronizacion.md §4).
+await en("reloj", (st) => st.updateNota(notaPelea, "la escribió antes el desviado"));
+await espera(1000);
+await en("portatil", (st) => st.updateNota(notaPelea, "y después el portátil en hora"));
+
+await sincroniza("reloj", nube);
+await sincroniza("portatil", nube);
+await sincroniza("reloj", nube);
+
+prueba("un reloj adelantado NO gana un conflicto que escribió antes", () => {
+  for (const nombre of ["portatil", "reloj"]) {
+    const n = vivos(estadoDe(nombre).notas).find((x) => x.id === notaPelea);
+    assert.equal(n.texto, "y después el portátil en hora", `${nombre}`);
+  }
+  const [fila] = enLaNube(`select to_jsonb(t.*) from public.notas t where t.id = '${notaPelea}'`);
+  assert.equal(fila.texto, "y después el portátil en hora");
+});
+
+// (b) ...y tampoco los pierde todos: si escribe DESPUÉS, gana.
+await en("portatil", (st) => st.updateNota(notaPelea, "otra vez el portátil"));
+await espera(1000);
+await en("reloj", (st) => st.updateNota(notaPelea, "y ahora sí el desviado, más tarde"));
+
+await sincroniza("portatil", nube);
+await sincroniza("reloj", nube);
+await sincroniza("portatil", nube);
+
+prueba("...y tampoco pierde el conflicto que escribió después", () => {
+  for (const nombre of ["portatil", "reloj"]) {
+    const n = vivos(estadoDe(nombre).notas).find((x) => x.id === notaPelea);
+    assert.equal(n.texto, "y ahora sí el desviado, más tarde", `${nombre}`);
+  }
+});
+
+prueba("y la nota ganadora no queda sellada ocho minutos en el futuro", () => {
+  const n = vivos(estadoDe("reloj").notas).find((x) => x.id === notaPelea);
+  const fuera = Math.round((n.actualizado - RELOJ_REAL()) / 1000);
+  assert.ok(fuera < 60, `sellada ${fuera} s por delante del reloj real`);
+});
+
+/* --- el estimador, caso a caso ------------------------------------ */
+
+const SIN_MEDIR = {
+  desfaseReloj: 0,
+  desfaseServidor: 0,
+  desfaseCandidato: 0,
+  desfaseConfirmaciones: 0,
+};
+
+prueba("la primera medida abre candidatura pero no se adopta a ciegas", () => {
+  const r = medirDesfase(SIN_MEDIR, { desfase: -300_000, servidor: 1_000 });
+  assert.equal(r.desfaseReloj, undefined, "ha adoptado una medida sin confirmar");
+  assert.equal(r.desfaseCandidato, -300_000);
+  assert.equal(r.desfaseConfirmaciones, 1);
+});
+
+prueba("dos medidas coherentes sí la adoptan", () => {
+  let m = { ...SIN_MEDIR };
+  m = { ...m, ...medirDesfase(m, { desfase: -300_000, servidor: 1_000 }) };
+  m = { ...m, ...medirDesfase(m, { desfase: -300_200, servidor: 2_000 }) };
+  assert.ok(Math.abs(m.desfaseReloj + 300_100) < 500, `desfase = ${m.desfaseReloj}`);
+});
+
+prueba("un lote sin filas nuevas no cuenta como medida", () => {
+  // Su `creado_at` no es más nuevo que el mayor ya visto: la fila ya estaba,
+  // así que la medida sale corta y no hay forma de saber cuánto.
+  const m = { ...SIN_MEDIR, desfaseServidor: 5_000, desfaseReloj: -300_000 };
+  assert.equal(medirDesfase(m, { desfase: -900_000, servidor: 4_000 }), null);
+  assert.equal(medirDesfase(m, { desfase: -900_000, servidor: 5_000 }), null);
+});
+
+prueba("una medida por encima sube el desfase sin pedir confirmación", () => {
+  const m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
+  assert.equal(medirDesfase(m, { desfase: -290_000, servidor: 2_000 }).desfaseReloj, -290_000);
+});
+
+prueba("una medida muy por debajo no baja el desfase a la primera", () => {
+  const m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
+  const r = medirDesfase(m, { desfase: -900_000, servidor: 2_000 });
+  assert.equal(r.desfaseReloj, undefined, "ha bajado sin confirmarse");
+  assert.equal(r.desfaseConfirmaciones, 1);
+});
+
+prueba("dos medidas seguidas y coherentes sí lo bajan (móvil puesto en hora)", () => {
+  let m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
+  m = { ...m, ...medirDesfase(m, { desfase: -900_000, servidor: 2_000 }) };
+  m = { ...m, ...medirDesfase(m, { desfase: -900_100, servidor: 3_000 }) };
+  assert.ok(Math.abs(m.desfaseReloj + 900_050) < 500, `desfase = ${m.desfaseReloj}`);
+});
+
+prueba("medidas discordantes entre sí no confirman nada", () => {
+  let m = { ...SIN_MEDIR, desfaseServidor: 1_000, desfaseReloj: -300_000 };
+  for (const [desfase, servidor] of [
+    [-900_000, 2_000],
+    [-1_400_000, 3_000],
+    [-2_000_000, 4_000],
+  ]) {
+    m = { ...m, ...medirDesfase(m, { desfase, servidor }) };
+  }
+  assert.equal(m.desfaseReloj, -300_000, "ha adoptado un desfase que nadie confirmó");
+});
+
+prueba("un desfase de menos de dos segundos no se aplica", () => {
+  assert.equal(desfaseAplicable({ ...SIN_MEDIR, desfaseReloj: 1_400 }), 0);
+  assert.equal(desfaseAplicable({ ...SIN_MEDIR, desfaseReloj: -1_400 }), 0);
+  assert.equal(desfaseAplicable({ ...SIN_MEDIR, desfaseReloj: -60_000 }), -60_000);
+});
+
+prueba("una respuesta demasiado lenta no sirve para medir", () => {
+  const fila = [{ creado_at: new Date(1_000_000).toISOString() }];
+  assert.equal(muestraDeRespuesta("cantes", fila, 0, 60_000), null);
+  assert.ok(muestraDeRespuesta("cantes", fila, 0, 200) != null);
+});
+
+prueba("las tablas que mandan su propio creado_at no miden nada", () => {
+  const fila = [{ creado_at: new Date(1_000_000).toISOString() }];
+  // `notas`, `keypoints` y `epigrafes` envían `creado_at` en el push, así que
+  // el servidor devolvería la marca del propio cliente y la medida sería
+  // siempre cero: un aparato desviado se creería en hora.
+  for (const tabla of ["notas", "keypoints", "epigrafes"]) {
+    assert.equal(muestraDeRespuesta(tabla, fila, 0, 100), null, tabla);
+  }
 });
 
 /* ------------------------------------------------------------------

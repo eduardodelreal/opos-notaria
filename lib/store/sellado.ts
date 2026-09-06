@@ -108,11 +108,19 @@ function sellarFila<T extends ConReloj>(
   omitir: readonly string[] = SOLO_RELOJ,
 ): T {
   if (previa === fila) return fila;
-  // Fila nueva: si la acción ya le puso reloj se respeta (puede venir de un
-  // import o de un pull con la fecha del otro dispositivo).
-  if (!previa) {
-    return typeof fila.actualizado === "number" ? fila : { ...fila, actualizado: ahora };
-  }
+  // Fila nueva. La acción le ha puesto `Date.now()` al construirla, que es el
+  // reloj de ESTE aparato y puede estar desviado del servidor; el sello lo
+  // sustituye por el corregido, que es el que va a arbitrar (lib/sync/reloj.ts).
+  //
+  // Y no es un detalle menor: la primera escritura de una fila es un INSERT, y
+  // en el insert no hay trigger que arregle una marca disparatada. Una fila
+  // insertada muy en el pasado puede quedar por debajo del cursor de pull de
+  // otro dispositivo, que entonces no la ve jamás.
+  //
+  // Las filas que traen un reloj ajeno —lo que baja del servidor, lo que se
+  // restaura de una copia— no pasan por aquí: ni el pull ni `importar()` usan
+  // el embudo `escribir()`.
+  if (!previa) return { ...fila, actualizado: ahora };
   if (iguales(fila, previa, omitir)) return fila;
   // Monotónico por fila, igual que el trigger del servidor
   // (`greatest(now(), old.updated_at + 1 ms)`): dos ediciones dentro del

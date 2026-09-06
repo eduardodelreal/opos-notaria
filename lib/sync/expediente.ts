@@ -11,6 +11,7 @@ import type {
   Tema,
   Vuelta,
 } from "../data/types";
+import { ahoraSellado, desfaseAplicable } from "./reloj";
 import {
   aFilaCante,
   aFilaEpigrafe,
@@ -72,6 +73,21 @@ export interface Marcas {
   ultimaSync: number;
   /** ¿Se hizo ya la reconciliación de primer arranque con esta cuenta? */
   primeraHecha: boolean;
+  /**
+   * Desfase estimado entre el reloj del servidor y el de este aparato, en ms
+   * (`servidor − local`). Ver lib/sync/reloj.ts y docs/sincronizacion.md §4.
+   */
+  desfaseReloj: number;
+  /**
+   * El `creado_at` más nuevo que se ha visto venir del servidor. Es lo que
+   * distingue un lote que ha insertado filas —cuya medida vale— de uno de
+   * puros updates, que devuelve marcas de nacimiento viejas. 0 = ninguno.
+   */
+  desfaseServidor: number;
+  /** Desfase que está pendiente de confirmarse. Ver `medirDesfase`. */
+  desfaseCandidato: number;
+  /** Medidas coherentes que apoyan al candidato. */
+  desfaseConfirmaciones: number;
 }
 
 export const MARCAS_INICIALES: Marcas = {
@@ -80,6 +96,10 @@ export const MARCAS_INICIALES: Marcas = {
   perfilActualizado: 0,
   ultimaSync: 0,
   primeraHecha: false,
+  desfaseReloj: 0,
+  desfaseServidor: 0,
+  desfaseCandidato: 0,
+  desfaseConfirmaciones: 0,
 };
 
 /**
@@ -150,7 +170,7 @@ export function filasParaPush(
       for (const id of ids) {
         recoger(
           id,
-          aFilaPerfil(exp.perfil, uid, ctx.marcas.perfilActualizado || Date.now()),
+          aFilaPerfil(exp.perfil, uid, ctx.marcas.perfilActualizado || ahoraSellado(ctx.marcas)),
         );
       }
       break;
@@ -180,8 +200,14 @@ export function filasParaPush(
       break;
     }
     case "sesiones": {
+      // La única tabla cuyo `updated_at` no lo pone el sellado del store:
+      // `Sesion` no tiene campo `actualizado` porque no hay nada que
+      // arbitrar. El desfase del reloj se le aplica aquí (ver `relojSesion`).
+      const desfase = desfaseAplicable(ctx.marcas);
       const idx = porId(exp.sesiones, (s) => s.id);
-      for (const id of ids) recoger(id, idx.has(id) ? aFilaSesion(idx.get(id)!, uid) : null);
+      for (const id of ids) {
+        recoger(id, idx.has(id) ? aFilaSesion(idx.get(id)!, uid, desfase) : null);
+      }
       break;
     }
     case "cantes": {

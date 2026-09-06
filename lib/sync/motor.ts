@@ -15,6 +15,7 @@ import {
   type Marcas,
 } from "./expediente";
 import { fusionar, type LoteBajado } from "./fusion";
+import { ahoraSellado, medirDesfase, muestraDeRespuesta } from "./reloj";
 import { relojFila, TABLAS, type Fila, type Tabla } from "./tablas";
 import type { Transporte } from "./transporte";
 
@@ -189,13 +190,20 @@ async function empujar(
 
     for (let i = 0; i < filas.length; i += LOTE_PUSH) {
       const trozo = filas.slice(i, i + LOTE_PUSH);
+      // El reloj local a los dos lados de la petición: con eso y el
+      // `creado_at` que devuelve el servidor se estima el desfase entre los
+      // dos relojes (lib/sync/reloj.ts). No cuesta ni una petición más.
+      const t0 = ahora();
       const devueltas = await transporte.subir(
         tabla,
         trozo.map((f) => f.fila),
       );
+      const t1 = ahora();
       subidas += trozo.length;
 
       const estado = almacen.leer();
+      const muestra = muestraDeRespuesta(tabla, devueltas, t0, t1);
+      const reloj = muestra == null ? null : medirDesfase(estado.marcas, muestra);
       // Adoptar la fila ganadora que devuelve el RETURNING (§4): si hemos
       // perdido el arbitraje, esto es lo que hay arriba y ya no hace falta
       // esperar al siguiente pull para enterarse.
@@ -211,11 +219,14 @@ async function empujar(
         if (k in estado.cola) subidasCola[k] = estado.cola[k];
       }
 
+      const marcasNuevas: Partial<Marcas> = {
+        ...(fusion.perfilActualizado ? { perfilActualizado: fusion.perfilActualizado } : {}),
+        ...(reloj ?? {}),
+      };
+
       almacen.aplicar({
         expediente: fusion.expediente,
-        marcas: fusion.perfilActualizado
-          ? { perfilActualizado: fusion.perfilActualizado }
-          : undefined,
+        marcas: Object.keys(marcasNuevas).length ? marcasNuevas : undefined,
         cola: reencolar(quitarSubidas(estado.cola, subidasCola), fusion.reencolar, ahora()),
       });
     }
@@ -289,7 +300,18 @@ async function tirar(
       // El cursor es el máximo `updated_at` RECIBIDO, no el reloj local
       // (§3.2): con el reloj local se pierden las filas que otro
       // dispositivo escribió durante este mismo pull.
-      ultimoPull: Math.max(marcas.ultimoPull, fusion.maxReloj - MARGEN_CURSOR),
+      //
+      // Con un tope, eso sí: nunca por delante de ahora. Una fila sellada en
+      // el futuro por un aparato con la hora mal puesta —o por una versión
+      // vieja de la app, que no corrige nada— empujaría el cursor a ese
+      // futuro y este dispositivo dejaría de ver TODO lo demás hasta que el
+      // reloj lo alcanzara. Lo que cuesta el tope es volver a bajar esa fila
+      // en cada ciclo mientras tanto, y bajar dos veces la misma fila no
+      // hace nada.
+      ultimoPull: Math.max(
+        marcas.ultimoPull,
+        Math.min(fusion.maxReloj, ahoraSellado(marcas, ahora())) - MARGEN_CURSOR,
+      ),
       ...(fusion.perfilActualizado ? { perfilActualizado: fusion.perfilActualizado } : {}),
     },
   });
@@ -411,7 +433,12 @@ async function primeraSincronizacion(
     marcas: {
       usuarioId: transporte.usuarioId,
       primeraHecha: true,
-      ultimoPull: Math.max(0, fusion.maxReloj - MARGEN_CURSOR),
+      // Mismo tope que en `tirar()`: una fila sellada en el futuro por otro
+      // aparato no puede dejar a este ciego desde el primer día.
+      ultimoPull: Math.max(
+        0,
+        Math.min(fusion.maxReloj, ahoraSellado(previo.marcas, marca)) - MARGEN_CURSOR,
+      ),
       ultimaSync: marca,
     },
   });

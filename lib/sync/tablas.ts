@@ -2,6 +2,7 @@ import type {
   AnalisisCante,
   Cante,
   CanteEpigrafe,
+  ComparacionCante,
   Epigrafe,
   EstadoTema,
   KeyPoint,
@@ -14,6 +15,7 @@ import type {
   Tema,
   TipoSesion,
   TipoSimulacro,
+  TranscripcionCante,
   Vuelta,
 } from "../data/types";
 
@@ -43,12 +45,14 @@ import type {
        nunca por esta tabla. La ruta se manda tal cual la tiene el cliente;
        como es determinista (`<uid>/<cante_id>.<ext>`), los dos dispositivos
        calculan la misma y el upsert no la pisa con otra distinta.
-     · `Cante.transcripcion` y `Cante.comparacion` NO viajan: no tienen
-       columna en el esquema y las migraciones están cerradas. Se quedan en
-       el dispositivo que las generó; como el audio sí sube, en otro aparato
-       se pueden regenerar. La fusión las conserva al perder el LWW
-       (lib/sync/fusion.ts): una fila que no habla de un campo no puede
-       borrarlo.
+     · `Cante.transcripcion` y `Cante.comparacion` SÍ viajan desde 0005.
+       Antes no tenían columna y se quedaban en el aparato que las generó:
+       como el audio sube igual, en otro dispositivo se regeneraban, y eso
+       es pagar otra vez la transcripción del cante entero y la llamada al
+       modelo. Lo que la fusión sigue conservando es el hueco: un cante que
+       gana el arbitraje SIN transcripción no borra la que hay en local
+       (lib/sync/fusion.ts), porque estos dos campos solo van de ausente a
+       presente y nadie los vacía a propósito.
      · las columnas de avisos de `perfiles` (0003) tampoco viajan aquí, por
        lo mismo: no están en el dominio y el upsert parcial las respeta.
    ============================================================ */
@@ -183,6 +187,10 @@ export interface FilaCante extends Sincronizable {
   analisis: AnalisisCante | null;
   /** Ruta en el bucket `cantes-audio`. Solo la ruta (0001, 0002). */
   audio_path: string | null;
+  /** Transcripción del audio (0005). */
+  transcripcion: TranscripcionCante | null;
+  /** Comparación de la transcripción con el texto del tema (0005). */
+  comparacion: ComparacionCante | null;
 }
 
 export interface FilaKeyPoint extends Sincronizable {
@@ -471,13 +479,20 @@ export function deFilaProgreso(f: FilaProgreso): ProgresoTema {
  * La sesión no tiene reloj en el dominio, y no es un olvido: es append-only
  * y no se entierra (borrar un tema no borra las horas), así que no hay nada
  * que arbitrar. Como columna hace falta igual, se manda el instante en que
- * se cerró: es estable, así que reenviarla no mueve nada en el servidor.
+ * se cerró: mientras el desfase no cambie es estable, así que reenviarla no
+ * mueve nada en el servidor.
+ *
+ * Sí lleva el desfase del reloj (lib/sync/reloj.ts), porque `updated_at` no
+ * solo arbitra: también es el cursor del pull. Una sesión insertada con la
+ * hora atrasada del móvil puede caer por debajo del cursor del portátil, y
+ * entonces esas horas de estudio no aparecen ahí nunca. `fin` en sí no se
+ * toca: es dato que el opositor ve en su histórico.
  */
-export function relojSesion(s: Sesion): number {
-  return s.fin;
+export function relojSesion(s: Sesion, desfase = 0): number {
+  return s.fin + desfase;
 }
 
-export function aFilaSesion(s: Sesion, usuarioId: string): FilaSesion {
+export function aFilaSesion(s: Sesion, usuarioId: string, desfase = 0): FilaSesion {
   return {
     id: s.id,
     usuario_id: usuarioId,
@@ -487,7 +502,7 @@ export function aFilaSesion(s: Sesion, usuarioId: string): FilaSesion {
     fin: iso(s.fin),
     segundos: Math.max(0, Math.round(s.segundos)),
     nota: texto(s.nota),
-    updated_at: iso(relojSesion(s)),
+    updated_at: iso(relojSesion(s, desfase)),
     deleted_at: null,
   };
 }
@@ -519,6 +534,11 @@ export function aFilaCante(c: Cante, usuarioId: string): FilaCante {
     feedback: texto(c.feedback),
     analisis: c.analisis ?? null,
     audio_path: c.audio?.path ?? null,
+    // Se mandan aunque sean `null`: la columna tiene que poder pasar de un
+    // valor a otro cuando el cante se reanaliza, y omitirla del payload haría
+    // que el `do update` del upsert la dejara como estuviera.
+    transcripcion: c.transcripcion ?? null,
+    comparacion: c.comparacion ?? null,
     updated_at: iso(c.actualizado),
     deleted_at: c.borrado == null ? null : iso(c.borrado),
   };
@@ -538,6 +558,8 @@ export function deFilaCante(f: FilaCante): Cante {
     // La fila solo trae la ruta. El resto de la ficha del audio (mime,
     // duración, marcas de epígrafe) es local y la conserva la fusión.
     audio: f.audio_path ? { path: f.audio_path } : undefined,
+    transcripcion: f.transcripcion ?? undefined,
+    comparacion: f.comparacion ?? undefined,
     actualizado: relojFila(f),
     borrado: ms(f.deleted_at),
   };

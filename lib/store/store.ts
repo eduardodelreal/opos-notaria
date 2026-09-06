@@ -20,6 +20,7 @@ import {
   type Marcas,
 } from "../sync/expediente";
 import type { Almacen, CambioSync } from "../sync/motor";
+import { ahoraSellado } from "../sync/reloj";
 import { esUuid, uid } from "../utils/id";
 import { calcularProximoRepaso } from "../data/srs";
 import {
@@ -1032,8 +1033,11 @@ function escribir(
   mutador: Partial<Estado> | ((s: Estado) => Partial<Estado>),
 ): void {
   useStore.setState((s) => {
-    const ahora = Date.now();
-    const sellado = sellar(s, typeof mutador === "function" ? mutador(s) : mutador);
+    // El reloj corregido con el desfase medido contra el servidor
+    // (lib/sync/reloj.ts). Es el mismo instante para el sello y para la cola:
+    // el del perfil sale de aquí y también arbitra.
+    const ahora = ahoraSellado(s.sincro);
+    const sellado = sellar(s, typeof mutador === "function" ? mutador(s) : mutador, ahora);
     // Y aquí mismo, por la misma razón, se encola lo que ha cambiado: el
     // sellado sin la cola movería el reloj de una fila que no viaja, que es
     // la mitad exacta del problema. Una acción nueva no tiene que acordarse

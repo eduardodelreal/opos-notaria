@@ -15,6 +15,7 @@ sobre una base ya migrada sin romper nada.
 | `migrations/0002_storage_audio.sql` | Bucket privado `cantes-audio` y políticas de Storage. |
 | `migrations/0003_vueltas_y_avisos.sql` | Tabla `vueltas` (append-only, sustituye al contador de `progreso_temas`), `suscripciones_aviso` para el Web Push y las preferencias de aviso en `perfiles`. |
 | `migrations/0004_avisos_enviados.sql` | Memoria de qué aviso se mandó a quién y qué día. Sin ella el tope de «uno al día» aguanta, pero el anti-repetición no: el mismo aviso llegaría cada mañana. Solo la escribe el cron con `service_role`. |
+| `migrations/0005_transcripcion_cante.sql` | Dos columnas `jsonb` en `cantes` para la transcripción del audio y su comparación con el texto del tema. Sin ellas se quedaban en el aparato que las generó y había que pagarlas otra vez en cada dispositivo. |
 
 `0002` no depende de `0001`, pero aplícalos igualmente en orden. `0003` sí
 depende: reutiliza `tocar_updated_at()` y **redefine** `cascada_borrado_tema()`
@@ -38,6 +39,7 @@ cp db/migrations/0001_esquema_inicial.sql supabase/migrations/20250101000001_esq
 cp db/migrations/0002_storage_audio.sql   supabase/migrations/20250101000002_storage_audio.sql
 cp db/migrations/0003_vueltas_y_avisos.sql supabase/migrations/20250101000003_vueltas_y_avisos.sql
 cp db/migrations/0004_avisos_enviados.sql  supabase/migrations/20250101000004_avisos_enviados.sql
+cp db/migrations/0005_transcripcion_cante.sql supabase/migrations/20250101000005_transcripcion_cante.sql
 supabase db push
 ```
 

@@ -213,11 +213,11 @@ function aplicarLote(acc: Acumulador, lote: LoteBajado, marcas: Marcas): void {
 /**
  * Colecciones planas con id y reloj: materias, cantes, keypoints, notas…
  *
- * `fundir` es para las entidades que tienen campos SIN columna en el
- * servidor. Una fila que no habla de un campo no puede borrarlo: ganar el
- * last-write-wins significa "mi versión de lo que está en la tabla es más
- * nueva", no "lo que tú tienes de más ya no vale". Hoy solo lo usan los
- * cantes (transcripción, comparación y la ficha del audio).
+ * `fundir` es para las entidades en las que ganar el last-write-wins no
+ * significa "lo que tú tienes de más ya no vale". Devuelve la fila fundida
+ * y, en `devolver`, si el resultado conserva algo que el servidor todavía no
+ * tiene: entonces la fila se REENCOLA aunque haya perdido el arbitraje, para
+ * que ese algo suba en el siguiente ciclo. Hoy solo lo usan los cantes.
  */
 function lista<E extends { id: string }, F extends Fila>(
   acc: Acumulador,
@@ -225,7 +225,7 @@ function lista<E extends { id: string }, F extends Fila>(
   filas: F[],
   deFila: (f: F) => E,
   reloj: (e: E) => number,
-  fundir?: (local: E, entrante: E) => E,
+  fundir?: (local: E, entrante: E) => { fila: E; devolver: boolean },
 ): void {
   if (!filas.length) return;
   const actual = acc.exp[clave] as unknown as E[];
@@ -247,7 +247,13 @@ function lista<E extends { id: string }, F extends Fila>(
     const rr = reloj(entrante);
     if (rr > rl) {
       salida = salida ?? [...actual];
-      salida[i] = fundir ? fundir(local, entrante) : entrante;
+      if (fundir) {
+        const fundido = fundir(local, entrante);
+        salida[i] = fundido.fila;
+        if (fundido.devolver) acc.reencolar.push({ tabla: clave, id: entrante.id });
+      } else {
+        salida[i] = entrante;
+      }
       acc.aplicadas += 1;
     } else if (rr < rl) {
       acc.reencolar.push({ tabla: clave, id: entrante.id });
@@ -263,18 +269,38 @@ function lista<E extends { id: string }, F extends Fila>(
 /**
  * Lo que el cante remoto NO puede borrar aunque gane el arbitraje.
  *
- * `transcripcion` y `comparacion` no tienen columna: el otro dispositivo ni
- * siquiera sabe que existen, y sustituir la fila entera con lo que baja
- * borraría un análisis que costó una llamada al modelo. De la ficha del
- * audio, la fila solo trae `audio_path`; el mime, la duración y las marcas
- * de epígrafe son de aquí y se conservan.
+ * Desde 0005 `transcripcion` y `comparacion` tienen columna, así que la fila
+ * que baja SÍ habla de ellas. Aun así se sigue conservando lo local cuando
+ * lo que baja es `null`, y ahora por un motivo distinto del de antes: estos
+ * dos campos solo van de ausente a presente. Nadie los vacía —no hay acción
+ * en el store que los borre— así que un `null` que baja no es "esto ya no
+ * vale", es "el dispositivo que escribió esa fila todavía no los tenía".
+ * Pisar con ese hueco costaría otra transcripción del cante entero y otra
+ * llamada al modelo.
+ *
+ * Y como ahora sí tienen sitio en el servidor, conservarlos no basta: hay
+ * que DEVOLVERLOS. Si nos quedamos el análisis y no reencolamos la fila, el
+ * único aparato que lo tiene es este y el otro seguirá regenerándolo. El
+ * reencolado termina solo: al subirlo, la fila del servidor ya lo trae y la
+ * siguiente fusión no encuentra nada que devolver.
+ *
+ * De la ficha del audio, en cambio, la fila solo trae `audio_path`; el mime,
+ * la duración y las marcas de epígrafe siguen sin columna, son de este
+ * aparato y no hay adónde devolverlas.
  */
-function fundirCante(local: Cante, entrante: Cante): Cante {
+function fundirCante(local: Cante, entrante: Cante): { fila: Cante; devolver: boolean } {
+  const transcripcion = entrante.transcripcion ?? local.transcripcion;
+  const comparacion = entrante.comparacion ?? local.comparacion;
   return {
-    ...entrante,
-    audio: entrante.audio ? { ...local.audio, ...entrante.audio } : local.audio,
-    transcripcion: entrante.transcripcion ?? local.transcripcion,
-    comparacion: entrante.comparacion ?? local.comparacion,
+    fila: {
+      ...entrante,
+      audio: entrante.audio ? { ...local.audio, ...entrante.audio } : local.audio,
+      transcripcion,
+      comparacion,
+    },
+    devolver:
+      (transcripcion != null && entrante.transcripcion == null) ||
+      (comparacion != null && entrante.comparacion == null),
   };
 }
 
