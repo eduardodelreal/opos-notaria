@@ -24,6 +24,7 @@ import { useStore, useTemas } from "@/lib/store/store";
 import { cx } from "./ui";
 import { CronoFlotante } from "./CronoFlotante";
 import { nombreVisible, useSesion } from "./Sesion";
+import { IndicadorSync } from "./Sincronizacion";
 
 const NAV = [
   { href: "/", label: "Panel", icono: Gauge },
@@ -121,6 +122,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="p-3 border-t border-[var(--border)] space-y-1">
+          <IndicadorSync />
           <BloqueSesion />
           <div className="flex items-center gap-1">
             <Link

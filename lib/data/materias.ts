@@ -57,6 +57,26 @@ export function materiasIniciales(): Materia[] {
   return PLANTILLA.map((m, i) => ({ ...m, id: uid(), orden: i, actualizado: ahora }));
 }
 
+/**
+ * ¿Es una materia tal y como salió de la siembra, sin que nadie la tocara?
+ *
+ * Lo pregunta la primera sincronización (docs/sincronizacion.md §9.3): si el
+ * opositor instala la app en dos aparatos antes de crear la cuenta, acaba
+ * con diez materias, cinco de cada. Las que siguen siendo idénticas a la
+ * plantilla y no tienen ni un tema colgando no son trabajo de nadie y se
+ * pueden descartar; las que ha editado o usado, no se tocan.
+ */
+export function esMateriaSembrada(m: Materia): boolean {
+  return PLANTILLA.some(
+    (p) =>
+      p.nombre === m.nombre &&
+      p.abrev === m.abrev &&
+      p.color === m.color &&
+      p.ejercicio === m.ejercicio &&
+      p.descripcion === m.descripcion,
+  );
+}
+
 /** Orden estable de las materias. La posición en el array ya no manda. */
 export function materiasOrdenadas(materias: Materia[]): Materia[] {
   return [...materias].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));

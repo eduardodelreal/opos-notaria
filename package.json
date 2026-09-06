@@ -12,6 +12,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "prueba:modelo": "node --experimental-strip-types --import ./pruebas/cargador.mjs pruebas/modelo.mjs",
+    "prueba:sync": "node --experimental-strip-types --import ./pruebas/cargador.mjs pruebas/sincronizacion.mjs",
     "prueba:avisos": "node --experimental-strip-types --import ./pruebas/cargador.mjs scripts/prueba-motor-avisos.mjs",
     "prueba:envio-push": "node --experimental-strip-types --import ./pruebas/cargador.mjs scripts/prueba-envio-push.mjs",
     "avisos:enviar": "node --experimental-strip-types --import ./pruebas/cargador.mjs scripts/enviar-avisos.ts",

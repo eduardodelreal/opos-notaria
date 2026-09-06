@@ -3,6 +3,7 @@ import "./globals.css";
 import { Proveedor } from "@/components/Proveedor";
 import { ProveedorSesion } from "@/components/Sesion";
 import { Shell } from "@/components/Shell";
+import { MotorSincronizacion } from "@/components/Sincronizacion";
 
 export const metadata: Metadata = {
   title: "opos-notaria — preparación de la oposición a Notarías",
@@ -41,6 +42,9 @@ export default function RootLayout({
       <body className="min-h-screen">
         <Proveedor>
           <ProveedorSesion>
+            {/* No pinta nada: mantiene vivo el ciclo de sincronización
+                mientras el opositor navega. */}
+            <MotorSincronizacion />
             <Shell>{children}</Shell>
           </ProveedorSesion>
         </Proveedor>

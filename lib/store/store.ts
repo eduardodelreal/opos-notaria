@@ -5,6 +5,21 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import * as React from "react";
 import { idbStorage } from "./persist";
 import { materiasIniciales } from "../data/materias";
+import { PERFIL_INICIAL } from "../data/perfil";
+import { haySupabase } from "../supabase/config";
+import {
+  cambiosDe,
+  clave as claveCola,
+  encolarTodo,
+  ID_PERFIL,
+  type Cola,
+} from "../sync/cola";
+import {
+  MARCAS_INICIALES,
+  type Expediente,
+  type Marcas,
+} from "../sync/expediente";
+import type { Almacen, CambioSync } from "../sync/motor";
 import { esUuid, uid } from "../utils/id";
 import { calcularProximoRepaso } from "../data/srs";
 import {
@@ -40,17 +55,6 @@ import type {
   Vuelta,
 } from "../data/types";
 
-const PERFIL_INICIAL: Perfil = {
-  nombre: "",
-  oposicion: "notarias",
-  fechaInicio: Date.now(),
-  objetivoHorasSemana: 45,
-  minutosPorTema: 10,
-  diasOxido: 45,
-  tema: "dark",
-  estiloFeedback: "directo",
-};
-
 export interface CronoActivo {
   tipo: TipoSesion;
   temaId?: string;
@@ -81,6 +85,15 @@ interface Estado {
   vueltas: Vuelta[];
   chat: MensajeChat[];
   crono: CronoActivo | null;
+  /**
+   * Cola de salida de la sincronización: qué filas ha tocado este aparato y
+   * todavía no han subido. Va DENTRO del estado persistido, no en una clave
+   * suya de IndexedDB, para que el dato y su marca de "pendiente" se
+   * guarden en la misma escritura (lib/sync/cola.ts).
+   */
+  cola: Cola;
+  /** Cursor del pull, cuenta y relojes de la sincronización. */
+  sincro: Marcas;
 }
 
 interface Acciones {
@@ -179,6 +192,8 @@ const ESTADO_INICIAL: Estado = {
   vueltas: [],
   chat: [],
   crono: null,
+  cola: {},
+  sincro: MARCAS_INICIALES,
 };
 
 function progresoVacio(temaId: string): ProgresoTema {
@@ -284,11 +299,14 @@ export const useStore = create<Store>()(
     (set, get) => ({
       ...ESTADO_INICIAL,
 
+      // El perfil también es una fila del servidor, así que su escritura
+      // pasa por el mismo embudo: si no, se editaría en Ajustes y no
+      // llegaría nunca al otro dispositivo.
       setPerfil: (parcial) =>
-        set((s) => ({ perfil: { ...s.perfil, ...parcial } })),
+        escribir((s) => ({ perfil: { ...s.perfil, ...parcial } })),
 
       alternarTema: () =>
-        set((s) => ({
+        escribir((s) => ({
           perfil: {
             ...s.perfil,
             tema: s.perfil.tema === "dark" ? "light" : "dark",
@@ -883,7 +901,7 @@ export const useStore = create<Store>()(
               ? migrarAUuid(bruto as ExpedienteV1).estado
               : (bruto as ExpedienteV2),
           );
-          set({
+          const importado: Expediente = {
             perfil: { ...PERFIL_INICIAL, ...(d.perfil ?? {}) },
             materias:
               Array.isArray(d.materias) && d.materias.length
@@ -897,15 +915,41 @@ export const useStore = create<Store>()(
             notas: d.notas ?? [],
             simulacros: d.simulacros ?? [],
             vueltas: d.vueltas ?? [],
-          });
+          };
+          const ahora = Date.now();
+          set((s) => ({
+            ...importado,
+            // Un expediente importado es tan local como el que había: hay
+            // que subirlo entero. Cada fila conserva su reloj, así que es
+            // el arbitraje —y no el orden de los acontecimientos— el que
+            // decide si gana lo importado o lo que ya hubiera en la nube.
+            cola: haySupabase()
+              ? {
+                  ...encolarTodo(importado, {}, ahora),
+                  [claveCola("perfiles", ID_PERFIL)]: ahora,
+                }
+              : {},
+            sincro: { ...s.sincro, perfilActualizado: ahora },
+          }));
           return { ok: true };
         } catch (e) {
           return { ok: false, error: (e as Error).message };
         }
       },
 
+      // Borra este navegador, no la cuenta: el cliente nunca hace DELETE y
+      // aquí no se entierra nada, así que lo que esté en la nube sigue ahí.
+      // Por eso se reinician también las marcas: la próxima sincronización
+      // vuelve a ser una primera, con su pull completo y su reconciliación
+      // de materias sembradas, y el expediente baja otra vez entero.
       borrarTodo: () =>
-        set({ ...ESTADO_INICIAL, hidratado: true, materias: materiasIniciales() }),
+        set({
+          ...ESTADO_INICIAL,
+          hidratado: true,
+          materias: materiasIniciales(),
+          cola: {},
+          sincro: MARCAS_INICIALES,
+        }),
     }),
     {
       name: "opos-notaria",
@@ -961,9 +1005,73 @@ export const useStore = create<Store>()(
 function escribir(
   mutador: Partial<Estado> | ((s: Estado) => Partial<Estado>),
 ): void {
-  useStore.setState((s) =>
-    sellar(s, typeof mutador === "function" ? mutador(s) : mutador),
-  );
+  useStore.setState((s) => {
+    const ahora = Date.now();
+    const sellado = sellar(s, typeof mutador === "function" ? mutador(s) : mutador);
+    // Y aquí mismo, por la misma razón, se encola lo que ha cambiado: el
+    // sellado sin la cola movería el reloj de una fila que no viaja, que es
+    // la mitad exacta del problema. Una acción nueva no tiene que acordarse
+    // de nada; una COLECCIÓN nueva sí, y por eso las dos listas —la del
+    // sellado y la de la cola— están cada una en un único sitio.
+    //
+    // Sin Supabase configurado no se encola nada: la app funciona entera en
+    // local y no tiene sentido llevar la cuenta de una cola que nadie va a
+    // vaciar. Cuando se conecte una cuenta, la primera sincronización encola
+    // el expediente entero de todas formas (lib/sync/motor.ts).
+    if (!haySupabase()) return sellado;
+    const salida = cambiosDe(s, sellado, s.cola, ahora);
+    if (salida.cola === s.cola) return sellado;
+    return {
+      ...sellado,
+      cola: salida.cola,
+      sincro: salida.perfilActualizado
+        ? { ...s.sincro, perfilActualizado: salida.perfilActualizado }
+        : s.sincro,
+    };
+  });
+}
+
+/* ============================================================
+   Puerta del motor de sincronización
+
+   El motor (lib/sync/motor.ts) no sabe nada de zustand: pide una
+   instantánea y devuelve un cambio ya resuelto. Lo que entra por
+   `aplicar()` viene del servidor o ya está arbitrado, así que NO pasa por
+   `escribir()`: ni se sella —los relojes que traen las filas son los
+   buenos— ni se encola, porque reencolar lo que acaba de bajar es la forma
+   más rápida de montar un bucle entre dos dispositivos.
+   ============================================================ */
+
+export function almacenSync(): Almacen {
+  return {
+    leer() {
+      const s = useStore.getState();
+      return { expediente: expedienteDe(s), cola: s.cola, marcas: s.sincro };
+    },
+    aplicar(cambio: CambioSync) {
+      useStore.setState((s) => {
+        const parcial: Partial<Estado> = { ...(cambio.expediente as Partial<Estado>) };
+        if (cambio.cola) parcial.cola = cambio.cola;
+        if (cambio.marcas) parcial.sincro = { ...s.sincro, ...cambio.marcas };
+        return parcial;
+      });
+    },
+  };
+}
+
+function expedienteDe(s: Estado): Expediente {
+  return {
+    perfil: s.perfil,
+    materias: s.materias,
+    temas: s.temas,
+    progresos: s.progresos,
+    sesiones: s.sesiones,
+    cantes: s.cantes,
+    keypoints: s.keypoints,
+    notas: s.notas,
+    simulacros: s.simulacros,
+    vueltas: s.vueltas,
+  };
 }
 
 /** Selector con memoria estable para listas ordenadas de temas. */

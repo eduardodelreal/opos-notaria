@@ -13,6 +13,7 @@ import {
   cx,
   useConfirmacion,
 } from "@/components/ui";
+import { AvisoSinCuenta, TarjetaSincronizacion } from "@/components/Sincronizacion";
 import type { Perfil } from "@/lib/data/types";
 
 export default function Ajustes() {
@@ -213,6 +214,8 @@ export default function Ajustes() {
             los datos del sitio, se pierde: descarga una copia de vez en cuando.
           </p>
 
+          <AvisoSinCuenta className="mb-4" />
+
           <div className="flex flex-wrap gap-2">
             <Boton variante="secundario" onClick={descargar}>
               <Download className="size-4" />
@@ -258,6 +261,8 @@ export default function Ajustes() {
           )}
         </Card>
       </div>
+
+      <TarjetaSincronizacion className="mt-4" />
 
       <Card className="mt-4">
         <TituloSeccion>Sobre la IA</TituloSeccion>
