@@ -8,6 +8,8 @@ import {
   Brain,
   Gauge,
   LayoutGrid,
+  LogIn,
+  LogOut,
   Menu,
   Mic,
   MessageSquareQuote,
@@ -21,6 +23,7 @@ import {
 import { useStore } from "@/lib/store/store";
 import { cx } from "./ui";
 import { CronoFlotante } from "./CronoFlotante";
+import { nombreVisible, useSesion } from "./Sesion";
 
 const NAV = [
   { href: "/", label: "Panel", icono: Gauge },
@@ -33,6 +36,9 @@ const NAV = [
   { href: "/chat", label: "Preparador IA", icono: MessageSquareQuote },
 ];
 
+/** Páginas con marco propio: no llevan barra lateral. */
+const RUTAS_AUTH = ["/entrar", "/crear-cuenta", "/salir"];
+
 export function Shell({ children }: { children: React.ReactNode }) {
   const ruta = usePathname();
   const [abierto, setAbierto] = React.useState(false);
@@ -44,7 +50,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   React.useEffect(() => setAbierto(false), [ruta]);
 
   // El modo cante ocupa toda la pantalla: sin barra lateral que distraiga.
-  const pantallaCompleta = ruta.startsWith("/cante/vivo");
+  // Las páginas de acceso tampoco la llevan, tienen su propio marco.
+  const pantallaCompleta =
+    ruta.startsWith("/cante/vivo") || RUTAS_AUTH.some((r) => ruta.startsWith(r));
 
   if (pantallaCompleta) return <>{children}</>;
 
@@ -112,27 +120,34 @@ export function Shell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className="p-3 border-t border-[var(--border)] flex items-center gap-1">
-          <Link
-            href="/ajustes"
-            className={cx(
-              "flex-1 flex items-center gap-3 h-10 px-3 rounded-[10px] text-[13.5px] font-medium transition-colors",
-              ruta.startsWith("/ajustes")
-                ? "text-fg bg-[var(--surface-2)]"
-                : "text-muted hover:text-fg hover:bg-[var(--surface-2)]/60",
-            )}
-          >
-            <Settings className="size-[17px] text-subtle" />
-            Ajustes
-          </Link>
-          <button
-            onClick={alternarTema}
-            aria-label="Cambiar tema"
-            title={tema === "dark" ? "Modo claro" : "Modo oscuro"}
-            className="size-10 grid place-items-center rounded-[10px] text-subtle hover:text-fg hover:bg-[var(--surface-2)] transition-colors"
-          >
-            {tema === "dark" ? <Sun className="size-[17px]" /> : <Moon className="size-[17px]" />}
-          </button>
+        <div className="p-3 border-t border-[var(--border)] space-y-1">
+          <BloqueSesion />
+          <div className="flex items-center gap-1">
+            <Link
+              href="/ajustes"
+              className={cx(
+                "flex-1 flex items-center gap-3 h-10 px-3 rounded-[10px] text-[13.5px] font-medium transition-colors",
+                ruta.startsWith("/ajustes")
+                  ? "text-fg bg-[var(--surface-2)]"
+                  : "text-muted hover:text-fg hover:bg-[var(--surface-2)]/60",
+              )}
+            >
+              <Settings className="size-[17px] text-subtle" />
+              Ajustes
+            </Link>
+            <button
+              onClick={alternarTema}
+              aria-label="Cambiar tema"
+              title={tema === "dark" ? "Modo claro" : "Modo oscuro"}
+              className="size-10 grid place-items-center rounded-[10px] text-subtle hover:text-fg hover:bg-[var(--surface-2)] transition-colors"
+            >
+              {tema === "dark" ? (
+                <Sun className="size-[17px]" />
+              ) : (
+                <Moon className="size-[17px]" />
+              )}
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -164,6 +179,66 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </div>
 
       <CronoFlotante />
+    </div>
+  );
+}
+
+/**
+ * Quién ha iniciado sesión, en el pie de la barra lateral.
+ *
+ * Si la instalación no tiene Supabase configurado no se pinta nada: la app
+ * funciona entera en local y no tiene sentido enseñar un acceso que no lleva
+ * a ninguna parte.
+ */
+function BloqueSesion() {
+  const { configurado, cargando, usuario } = useSesion();
+
+  if (!configurado || cargando) return null;
+
+  if (!usuario) {
+    return (
+      <Link
+        href="/entrar"
+        className="flex items-center gap-3 h-10 px-3 rounded-[10px] text-[13.5px] font-medium text-muted hover:text-fg hover:bg-[var(--surface-2)]/60 transition-colors"
+      >
+        <LogIn className="size-[17px] text-subtle" />
+        Entrar
+      </Link>
+    );
+  }
+
+  const etiqueta = nombreVisible(usuario);
+
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex-1 min-w-0 flex items-center gap-2.5 h-10 px-3">
+        <span
+          className="size-[22px] shrink-0 grid place-items-center rounded-full text-[10px] font-semibold text-white/95"
+          style={{
+            background:
+              "linear-gradient(145deg, var(--lacre-bright), var(--lacre))",
+          }}
+          aria-hidden
+        >
+          {etiqueta.slice(0, 1).toUpperCase()}
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[9.5px] uppercase tracking-[0.16em] text-subtle leading-none">
+            Sesión
+          </span>
+          <span className="block text-[12px] text-muted truncate leading-tight mt-1" title={etiqueta}>
+            {etiqueta}
+          </span>
+        </span>
+      </div>
+      <Link
+        href="/salir"
+        aria-label="Cerrar sesión"
+        title="Cerrar sesión"
+        className="size-9 shrink-0 grid place-items-center rounded-[10px] text-subtle hover:text-fg hover:bg-[var(--surface-2)] transition-colors"
+      >
+        <LogOut className="size-[16px]" />
+      </Link>
     </div>
   );
 }

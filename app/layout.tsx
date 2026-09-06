@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Proveedor } from "@/components/Proveedor";
+import { ProveedorSesion } from "@/components/Sesion";
 import { Shell } from "@/components/Shell";
 
 export const metadata: Metadata = {
@@ -39,7 +40,9 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen">
         <Proveedor>
-          <Shell>{children}</Shell>
+          <ProveedorSesion>
+            <Shell>{children}</Shell>
+          </ProveedorSesion>
         </Proveedor>
       </body>
     </html>
