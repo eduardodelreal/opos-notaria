@@ -167,7 +167,7 @@ function revisaEstricto(nodo, ruta = "raíz", errores = []) {
 
 const recibidoOpenAI = [];
 /** Se puede trucar desde una prueba para simular respuestas raras. */
-const guionOpenAI = { texto: null, jsonEstructurado: null };
+const guionOpenAI = { texto: null, jsonEstructurado: null, rechazar: false };
 
 const TEXTO_STREAM = [
   "Vas justo de tiempo en el tema 47. ",
@@ -248,8 +248,14 @@ const servidorOpenAI = http.createServer(async (req, res) => {
     : (guionOpenAI.texto ?? TEXTO_STREAM.join(""));
 
   if (!cuerpo.stream) {
+    const r = respuestaOpenAI(cuerpo, texto);
+    if (guionOpenAI.rechazar) {
+      // Así señala OpenAI que declina: una parte de contenido `refusal`,
+      // no un `stop_reason` como en Anthropic.
+      r.output[0].content = [{ type: "refusal", refusal: "No puedo ayudar con eso." }];
+    }
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(respuestaOpenAI(cuerpo, texto)));
+    res.end(JSON.stringify(r));
     return;
   }
 
@@ -420,6 +426,7 @@ const { POST: chat } = await import("../app/api/ai/chat/route.ts");
 const { POST: analisis } = await import("../app/api/ai/analisis-cante/route.ts");
 const { POST: comparar } = await import("../app/api/ai/comparar-cante/route.ts");
 const { POST: transcribir } = await import("../app/api/ai/transcribir/route.ts");
+const { POST: plan } = await import("../app/api/ai/plan/route.ts");
 const { GET: estado } = await import("../app/api/ai/estado/route.ts");
 const { aEsquemaEstricto } = await import("../lib/ai/proveedores/esquema.ts");
 
@@ -555,6 +562,31 @@ await prueba("/api/ai/estado dice quién atiende", async () => {
   assert.equal(d.transcripcion, true);
 });
 
+await prueba("el plan (respuesta de texto) vuelve entero", async () => {
+  const res = await plan(post({ ficha: FICHA, instrucciones: "El jueves no puedo." }));
+  assert.equal(res.status, 200);
+  const datos = await res.json();
+  assert.equal(datos.plan, TEXTO_STREAM.join(""));
+  assert.equal(datos.modelo, "gpt-5.6-sol");
+  const { cuerpo } = recibidoOpenAI.at(-1);
+  assert.equal(cuerpo.stream, undefined, "el plan no va en streaming");
+  assert.equal(cuerpo.max_output_tokens, 16000);
+  assert.ok(!cuerpo.text, "sin esquema no se manda text.format");
+  assert.ok(cuerpo.input[0].content.includes("El jueves no puedo."));
+});
+
+await prueba("un rechazo de OpenAI sale como 422 y no como texto vacío", async () => {
+  guionOpenAI.rechazar = true;
+  try {
+    const res = await plan(post({ ficha: FICHA }));
+    assert.equal(res.status, 422);
+    const d = await res.json();
+    assert.equal(d.error, "rechazo");
+  } finally {
+    guionOpenAI.rechazar = false;
+  }
+});
+
 /* ============================================================
    2. Anthropic (que la refactorización no se lo haya llevado por delante)
    ============================================================ */
@@ -590,6 +622,17 @@ await prueba("el análisis con Anthropic manda el esquema SIN tocar", async () =
   );
   const errores = valida(cuerpo.output_config.format.schema, datos.analisis);
   assert.deepEqual(errores, []);
+});
+
+await prueba("el plan con Anthropic vuelve entero", async () => {
+  const res = await plan(post({ ficha: FICHA }));
+  assert.equal(res.status, 200);
+  const datos = await res.json();
+  assert.equal(datos.plan, TEXTO_STREAM.join(""));
+  assert.equal(datos.modelo, "claude-opus-5");
+  const { cuerpo } = recibidoAnthropic.at(-1);
+  assert.equal(cuerpo.max_tokens, 16000);
+  assert.ok(!cuerpo.output_config, "sin esquema no se manda output_config");
 });
 
 /* ============================================================

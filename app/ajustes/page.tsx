@@ -442,6 +442,7 @@ function BloqueApariencia() {
                   <button
                     key={t.id}
                     data-tono={t.id}
+                    aria-pressed={perfil.tema === t.id}
                     onClick={() => setPerfil({ tema: t.id })}
                     title={t.descripcion}
                     className={cx(
@@ -472,6 +473,7 @@ function BloqueApariencia() {
                   <button
                     key={a.id}
                     data-acento={a.id}
+                    aria-pressed={activo}
                     onClick={() =>
                       setPerfil(
                         a.id === "personal"
@@ -543,6 +545,7 @@ function BloqueApariencia() {
                   <button
                     key={f.id}
                     data-fuente={f.id}
+                    aria-pressed={perfil.fuenteTemas === f.id}
                     onClick={() => setPerfil({ fuenteTemas: f.id })}
                     className={cx(
                       "h-8 px-3.5 rounded-lg text-[13px] font-medium transition-all",
@@ -595,6 +598,7 @@ function BloqueApariencia() {
                   <button
                     key={d.id}
                     data-densidad={d.id}
+                    aria-pressed={perfil.densidad === d.id}
                     onClick={() => setPerfil({ densidad: d.id })}
                     className={cx(
                       "h-8 px-3.5 rounded-lg text-[13px] font-medium transition-all inline-flex items-center gap-2",

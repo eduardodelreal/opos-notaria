@@ -519,7 +519,9 @@ await paso("«volver a la de siempre» devuelve la app original", async () => {
   if (e.clases.trim() !== "") throw new Error(`quedan clases: "${e.clases}"`);
   if (e.lacre.toLowerCase() !== "#a82f3c") throw new Error(`acento: ${e.lacre}`);
   if (e.cuerpo !== "1.0625rem") throw new Error(`cuerpo: ${e.cuerpo}`);
-  if (e.espaciado !== "0.25rem") throw new Error(`espaciado: ${e.espaciado}`);
+  // El navegador devuelve la variable normalizada (".25rem"), así que se
+  // compara el número, no la cadena.
+  if (parseFloat(e.espaciado) !== 0.25) throw new Error(`espaciado: ${e.espaciado}`);
 });
 
 // 11. Sin clave, los botones de IA avisan

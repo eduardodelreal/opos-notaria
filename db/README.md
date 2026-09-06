@@ -16,11 +16,18 @@ sobre una base ya migrada sin romper nada.
 | `migrations/0003_vueltas_y_avisos.sql` | Tabla `vueltas` (append-only, sustituye al contador de `progreso_temas`), `suscripciones_aviso` para el Web Push y las preferencias de aviso en `perfiles`. |
 | `migrations/0004_avisos_enviados.sql` | Memoria de qué aviso se mandó a quién y qué día. Sin ella el tope de «uno al día» aguanta, pero el anti-repetición no: el mismo aviso llegaría cada mañana. Solo la escribe el cron con `service_role`. |
 | `migrations/0005_transcripcion_cante.sql` | Dos columnas `jsonb` en `cantes` para la transcripción del audio y su comparación con el texto del tema. Sin ellas se quedaban en el aparato que las generó y había que pagarlas otra vez en cada dispositivo. |
+| `migrations/0006_apariencia.sql` | Cómo tiene configurada la app el opositor (acento, tono base, tipografía y cuerpo del texto de los temas, densidad, orden de los temas, vista del programa), en `perfiles`. Amplía el check de `tema` para admitir `sepia`. Todos los DEFAULT reproducen la app tal y como era: quien no toque nada, no nota nada. |
 
 `0002` no depende de `0001`, pero aplícalos igualmente en orden. `0003` sí
 depende: reutiliza `tocar_updated_at()` y **redefine** `cascada_borrado_tema()`
 para meter las vueltas en la cascada, así que reaplicar `0001` a solas deja las
 vueltas fuera del borrado en cascada hasta que se vuelva a aplicar `0003`.
+
+`0006` también depende de `0001`: **amplía** el check de `perfiles.tema` para
+que admita `sepia`. Como el check en línea de `0001` se llama
+`perfiles_tema_check` y `0006` lo tira y lo vuelve a crear, reaplicar `0001` a
+solas no lo estropea (`create table if not exists` no recrea nada), pero
+reordenar los ficheros sí: aplíquense siempre en orden.
 
 ## Aplicar con la CLI de Supabase
 
@@ -40,6 +47,7 @@ cp db/migrations/0002_storage_audio.sql   supabase/migrations/20250101000002_sto
 cp db/migrations/0003_vueltas_y_avisos.sql supabase/migrations/20250101000003_vueltas_y_avisos.sql
 cp db/migrations/0004_avisos_enviados.sql  supabase/migrations/20250101000004_avisos_enviados.sql
 cp db/migrations/0005_transcripcion_cante.sql supabase/migrations/20250101000005_transcripcion_cante.sql
+cp db/migrations/0006_apariencia.sql supabase/migrations/20250101000006_apariencia.sql
 supabase db push
 ```
 

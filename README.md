@@ -73,6 +73,28 @@ Horas totales y por semana, avance ponderado del programa, radar de esfuerzo por
 
 Y una **proyección honesta**: a tu ritmo de las últimas 8 semanas, cuántas semanas te quedan y si llegas a la fecha de examen que hayas fijado.
 
+### La app a tu gusto
+
+Vas a pasar años delante de esta pantalla, así que se ajusta. Todo desde
+**Ajustes → Apariencia**, con vista previa: el cambio se aplica al instante, no
+hay que guardar y adivinar.
+
+- **Fondo**: oscuro, claro o **sepia** (papel cálido, para leer temas durante horas).
+- **Acento**: lacre, tinta, jade, cárdeno, cobre o **el color que quieras**. El
+  latón dorado no se toca: es lo que hace que siga siendo la misma app. Si el
+  color libre no se lee sobre el fondo, la app **le corrige la luminosidad y te
+  lo dice**; ninguna combinación elegible deja texto ilegible.
+- **Texto de los temas**: serif o sans, y el cuerpo de 15 a 24 px. Solo cambia
+  el texto que estudias; la interfaz se queda como está.
+- **Densidad**: normal o compacta.
+- **Orden de los temas**: por número, estado, urgencia de repaso, tiempo
+  invertido o nota de cante. Vale en el programa, el cante, el crono y el repaso.
+- **Orden de las materias**: con las flechas de Programa → Materias.
+
+Todo esto vive en tu perfil, así que **viaja entre dispositivos** como el resto
+del expediente. Y los valores por defecto son la app de siempre: quien no toca
+nada, no nota nada.
+
 ---
 
 ## Arrancar en local
@@ -172,7 +194,8 @@ Detalles que importan:
 
 - **Sin librería de gráficas.** Los cinco gráficos son SVG a medida (`components/graficos.tsx`): el estilo es el de la app y no cargamos 90 kB para pintar barras.
 - **Sin `next/font`.** Las fuentes se cargan por `<link>` con stack de respaldo, así el build no depende de que Google Fonts esté accesible.
-- **Diseño por tokens CSS.** Claro y oscuro se cambian reescribiendo variables, no duplicando clases.
+- **Diseño por tokens CSS.** Los tres tonos (oscuro, claro y sepia) se cambian reescribiendo variables, no duplicando clases. La personalización del opositor es un puñado de variables más sobre `<html>`, calculadas en un único sitio (`lib/data/apariencia.ts`) y replicadas tal cual por el guion antiparpadeo del `head`.
+- **La legibilidad no se negocia.** El acento libre pasa por una corrección de contraste WCAG medida de verdad (`lib/data/color.ts`): si no se lee sobre el fondo elegido, se le ajusta la luminosidad hasta que se lee.
 
 ---
 
@@ -209,7 +232,8 @@ opos-notaria/
 │                             # chat, plan, keypoints, dictamen, estado
 ├── components/               # Shell, primitivos de UI, gráficos SVG, crono flotante
 ├── lib/
-│   ├── data/                 # types, materias, parser de importación, srs
+│   ├── data/                 # types, materias, parser de importación, srs,
+│   │                         # apariencia + color (contraste WCAG medido)
 │   ├── store/                # Zustand + persistencia IndexedDB
 │   ├── ai/                   # cliente, prompts, ficha del opositor, hooks
 │   ├── audio/                # grabadora, almacén de blobs y subida a Storage

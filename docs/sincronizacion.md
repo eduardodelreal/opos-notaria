@@ -270,6 +270,11 @@ baja una que ya tienes, es la misma.
 ### Mutables de verdad
 
 - **`perfiles`** — una fila, se edita en Ajustes. Conflicto posible pero raro.
+  Desde `0006` lleva también la apariencia (acento, tono base, tipografía y
+  cuerpo del texto de los temas, densidad, orden de los temas, vista del
+  programa): son preferencias del OPOSITOR, no del aparato, así que viajan
+  como el resto. El last-write-wins por fila basta —nadie está cambiando el
+  acento en dos sitios a la vez— y no hay nada que fusionar campo a campo.
 - **`materias`**, **`temas`**, **`epigrafes`** — se editan al montar el temario.
   Momento intenso pero corto y normalmente en un solo dispositivo.
 - **`progreso_temas`** — la tabla caliente. Ver §6.
@@ -554,4 +559,5 @@ las filas a sincronizar para arreglar un problema que no se da.
 - [ ] Borrado = `deleted_at`, y filtro `deleted_at is null` en todos los selectores.
 - [x] Audio en cola aparte, después de la fila (§8). Hecho en `lib/audio/`.
 - [x] Transcripción y comparación del cante con columna propia (§8, migración 0005).
+- [x] La apariencia y el orden de los temas viajan en `perfiles` (migración 0006).
 - [x] Corrección de la deriva de relojes al sellar (§4). Hecho en `lib/sync/reloj.ts`.
