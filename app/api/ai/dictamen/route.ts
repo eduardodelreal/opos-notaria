@@ -8,7 +8,8 @@ import {
   textoDe,
 } from "@/lib/ai/client";
 import { sistemaDictamen } from "@/lib/ai/prompts";
-import { conCors, responderPreflight } from "@/lib/ai/cors";
+import { responderPreflight } from "@/lib/ai/cors";
+import { protegida } from "@/lib/ai/guardia";
 import type { Perfil } from "@/lib/data/types";
 
 export const runtime = "nodejs";
@@ -80,6 +81,9 @@ export function OPTIONS(req: Request) {
   return responderPreflight(req);
 }
 
-export async function POST(req: Request) {
-  return conCors(await manejar(req), req);
-}
+/**
+ * La sesión se comprueba fuera de `manejar`: si esta instalación tiene
+ * Supabase configurado, sin sesión válida no se llega ni a leer el cuerpo,
+ * y por tanto no se gasta un céntimo. Ver `lib/ai/guardia.ts`.
+ */
+export const POST = protegida(manejar);

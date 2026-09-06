@@ -6,7 +6,8 @@ import { Badge, Boton, TituloSeccion, cx } from "./ui";
 import { TarjetaComparacion } from "./TarjetaComparacion";
 import { useStore } from "@/lib/store/store";
 import { descargarAudio, fuenteDeAudio } from "@/lib/audio/subida";
-import { rutaIA, useIA } from "@/lib/ai/hooks";
+import { llamarIA, pedirIA, useIA } from "@/lib/ai/hooks";
+import { NotaIA } from "./AvisoIA";
 import {
   construirComparacion,
   hayTextoDeTema,
@@ -107,7 +108,9 @@ export function GrabacionCante({
       // tecnicismos y luego se cuentan como lagunas que no existieron.
       cuerpo.append("pista", pistaDeTema(tema));
 
-      const r = await fetch(rutaIA("/api/ai/transcribir"), {
+      // FormData sin `Content-Type` a mano: lo pone el navegador con su
+      // frontera multipart. `llamarIA` solo añade la cabecera de sesión.
+      const r = await llamarIA("/api/ai/transcribir", {
         method: "POST",
         body: cuerpo,
       });
@@ -136,13 +139,9 @@ export function GrabacionCante({
     setTrabajando("comparar");
     setError(null);
     try {
-      const r = await fetch(rutaIA("/api/ai/comparar-cante"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          comparacion: construirComparacion(cante, tema, cante.transcripcion),
-          estilo,
-        }),
+      const r = await pedirIA("/api/ai/comparar-cante", {
+        comparacion: construirComparacion(cante, tema, cante.transcripcion),
+        estilo,
       });
       const d = await r.json();
       if (!r.ok) {
@@ -282,11 +281,14 @@ export function GrabacionCante({
             variante="secundario"
             onClick={transcribir}
             cargando={trabajando === "texto"}
-            disabled={!ia.transcripcion || trabajando !== null || !fuente}
+            disabled={!ia.transcripcion || ia.bloqueado || trabajando !== null || !fuente}
           >
             {trabajando === "texto" ? "Transcribiendo…" : "Transcribir el cante"}
           </Boton>
-          {!ia.transcripcion && !ia.cargando && (
+          {/* Falta sesión antes que falta proveedor: es lo que el opositor
+              puede arreglar él mismo, y transcribir también cuesta dinero. */}
+          {ia.bloqueado && <NotaIA ia={ia} />}
+          {!ia.bloqueado && !ia.transcripcion && !ia.cargando && (
             <span className="text-[12px] text-subtle leading-relaxed max-w-md">
               No hay servicio de transcripción configurado. La API de Anthropic no
               acepta audio: hace falta un proveedor compatible con Whisper
@@ -306,7 +308,7 @@ export function GrabacionCante({
               variante="oro"
               onClick={comparar}
               cargando={trabajando === "comparar"}
-              disabled={!ia.disponible || !conTexto || trabajando !== null}
+              disabled={!ia.listo || !conTexto || trabajando !== null}
             >
               <ScanSearch className="size-4" />
               {trabajando === "comparar"
@@ -319,11 +321,7 @@ export function GrabacionCante({
                 Epígrafes y vuelve aquí.
               </span>
             )}
-            {conTexto && !ia.disponible && !ia.cargando && (
-              <span className="text-[12px] text-subtle">
-                Configura ANTHROPIC_API_KEY para activar la comparación.
-              </span>
-            )}
+            {conTexto && <NotaIA ia={ia} />}
           </div>
         )
       )}

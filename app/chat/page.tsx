@@ -13,7 +13,8 @@ import {
 import { useCantes, useProgresos, useSesiones, useStore, useTemas } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import { Boton, Card, TituloSeccion, Vacio, cx } from "@/components/ui";
-import { useFicha, useIA, rutaIA } from "@/lib/ai/hooks";
+import { useFicha, useIA, pedirIA } from "@/lib/ai/hooks";
+import { AvisoIA } from "@/components/AvisoIA";
 import { FIN_RESPUESTA } from "@/lib/ai/protocolo";
 import { resumenGlobal } from "@/lib/data/srs";
 import { horas } from "@/lib/utils/time";
@@ -93,16 +94,17 @@ export default function Chat() {
     let completa = false;
 
     try {
-      const r = await fetch(rutaIA("/api/ai/chat"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // `pedirIA` añade el token de sesión; el streaming se lee igual
+      // porque devuelve la Response cruda, sin tocar el cuerpo.
+      const r = await pedirIA(
+        "/api/ai/chat",
+        {
           mensajes: historial,
           ficha: ficha(),
           estilo: perfil.estiloFeedback,
-        }),
-        signal: controlador.signal,
-      });
+        },
+        { signal: controlador.signal },
+      );
 
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
@@ -164,20 +166,7 @@ export default function Chat() {
         }
       />
 
-      {!ia.cargando && !ia.disponible && (
-        <Card className="mb-4 flex items-start gap-3.5">
-          <Sparkles className="size-4 text-[var(--warn)] shrink-0 mt-0.5" />
-          <div>
-            <p className="text-[13.5px] font-medium">El chat está apagado</p>
-            <p className="text-[12.5px] text-muted mt-1 leading-relaxed">
-              Copia <code className="text-[var(--laton)]">.env.example</code> a{" "}
-              <code className="text-[var(--laton)]">.env.local</code>, pon tu{" "}
-              <code className="text-[var(--laton)]">ANTHROPIC_API_KEY</code> y reinicia
-              el servidor. El resto de la app funciona igual sin clave.
-            </p>
-          </div>
-        </Card>
-      )}
+      <AvisoIA ia={ia} titulo="El chat está apagado" />
 
       <Card className="p-0 overflow-hidden flex flex-col" style={{ minHeight: "60vh" }}>
         <div className="flex-1 overflow-y-auto px-5 sm:px-7 py-6 space-y-6 max-h-[62vh]">
@@ -212,7 +201,7 @@ export default function Chat() {
                       <button
                         key={s.texto}
                         onClick={() => enviar(s.prompt)}
-                        disabled={!ia.disponible}
+                        disabled={!ia.listo}
                         className="text-left px-4 py-3.5 rounded-[10px] border border-[var(--border)] bg-[var(--surface-2)] hover:border-[var(--border-strong)] transition-colors disabled:opacity-40 disabled:pointer-events-none"
                       >
                         <Icono className="size-4 text-[var(--laton)] mb-2.5" />
@@ -253,11 +242,13 @@ export default function Chat() {
                 }
               }}
               rows={1}
-              disabled={!ia.disponible}
+              disabled={!ia.listo}
               placeholder={
-                ia.disponible
+                ia.listo
                   ? "Pregunta lo que quieras sobre tu preparación…"
-                  : "Configura ANTHROPIC_API_KEY para escribir"
+                  : ia.bloqueado
+                    ? "Inicia sesión para escribir al preparador"
+                    : "Configura ANTHROPIC_API_KEY para escribir"
               }
               className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[12px] px-4 py-3 text-[14px] resize-none outline-none focus:border-[var(--border-strong)] transition-colors max-h-40 disabled:opacity-50"
               style={{ minHeight: 46 }}
@@ -271,7 +262,7 @@ export default function Chat() {
                 variante="primario"
                 tam="lg"
                 onClick={() => enviar(entrada)}
-                disabled={!entrada.trim() || !ia.disponible}
+                disabled={!entrada.trim() || !ia.listo}
                 className="px-4"
               >
                 <Send className="size-4" />

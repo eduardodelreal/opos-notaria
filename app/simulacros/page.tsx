@@ -36,7 +36,8 @@ import {
 } from "@/components/ui";
 import { urgencia } from "@/lib/data/srs";
 import { fecha, reloj } from "@/lib/utils/time";
-import { useIA , rutaIA } from "@/lib/ai/hooks";
+import { useIA, pedirIA } from "@/lib/ai/hooks";
+import { NotaIA } from "@/components/AvisoIA";
 import type { Simulacro, Tema } from "@/lib/data/types";
 
 export default function Simulacros() {
@@ -431,19 +432,15 @@ function Dictamen() {
     setCargando(modo);
     setError(null);
     try {
-      const r = await fetch(rutaIA("/api/ai/dictamen"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          modo,
-          supuesto,
-          respuesta,
-          estilo: perfil.estiloFeedback,
-          temas: temas
-            .slice(0, 40)
-            .map((t) => `T${t.numero} ${t.titulo}`)
-            .join("; "),
-        }),
+      const r = await pedirIA("/api/ai/dictamen", {
+        modo,
+        supuesto,
+        respuesta,
+        estilo: perfil.estiloFeedback,
+        temas: temas
+          .slice(0, 40)
+          .map((t) => `T${t.numero} ${t.titulo}`)
+          .join("; "),
       });
       const d = await r.json();
       if (!r.ok) {
@@ -517,12 +514,14 @@ function Dictamen() {
                 Arrancar reloj
               </Boton>
             )}
-            {ia.disponible && (
+            {(ia.disponible || ia.bloqueado) && (
               <Boton
                 tam="sm"
                 variante="oro"
                 onClick={() => llamar("generar")}
                 cargando={cargando === "generar"}
+                disabled={!ia.listo}
+                title={ia.bloqueado ? "Inicia sesión para usar la IA" : undefined}
               >
                 <Sparkles className="size-3.5" />
                 Generar supuesto
@@ -557,17 +556,15 @@ function Dictamen() {
             variante="primario"
             onClick={() => llamar("corregir")}
             cargando={cargando === "corregir"}
-            disabled={!ia.disponible || !respuesta.trim()}
+            disabled={!ia.listo || !respuesta.trim()}
           >
             <Sparkles className="size-4" />
             Corregir con la rúbrica
           </Boton>
         </div>
-        {!ia.disponible && !ia.cargando && (
-          <p className="text-[12px] text-subtle mt-2 text-right">
-            Configura ANTHROPIC_API_KEY para activar la corrección.
-          </p>
-        )}
+        <p className="text-[12px] mt-2 text-right">
+          <NotaIA ia={ia} />
+        </p>
         {error && (
           <p className="text-[13px] text-[var(--danger)] mt-3">{error}</p>
         )}

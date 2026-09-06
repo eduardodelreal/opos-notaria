@@ -19,7 +19,7 @@ La solución no duplica código: **el mismo repositorio desplegado dos veces**.
 
 | | Qué sirve | Variables clave |
 |---|---|---|
-| **Railway** | El mismo build, actuando además de backend de IA | `ANTHROPIC_API_KEY`, `ORIGENES_PERMITIDOS` |
+| **Railway** | El mismo build, actuando además de backend de IA | `ANTHROPIC_API_KEY`, `ORIGENES_PERMITIDOS`, las dos `NEXT_PUBLIC_SUPABASE_*` |
 | **Netlify** | La app de cara al usuario | `NEXT_PUBLIC_IA_URL` → URL de Railway |
 
 El navegador carga la app desde Netlify y manda las llamadas de IA
@@ -39,7 +39,7 @@ local y en un despliegue solo-Railway todo funciona sin tocar nada.
 | `TRANSCRIPCION_API_KEY` | opcional | no | Transcribir los cantes. Es **otro proveedor**: la API de Anthropic no acepta audio (docs/ia.md) |
 | `TRANSCRIPCION_URL` | opcional | no | Por defecto `https://api.openai.com/v1`. Cualquier servicio con `POST /audio/transcriptions` |
 | `TRANSCRIPCION_MODELO` | opcional | no | Por defecto `whisper-1` |
-| `NEXT_PUBLIC_SUPABASE_URL` | sí | sí | **Se incrusta al compilar** |
+| `NEXT_PUBLIC_SUPABASE_URL` | sí | sí | **Se incrusta al compilar**. En Railway, además, es lo que enciende la exigencia de sesión en `/api/ai/*` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | sí | sí | **Se incrusta al compilar**. Es pública por diseño; la seguridad la da RLS |
 | `NEXT_PUBLIC_IA_URL` | **vacía** | URL de Railway | **Se incrusta al compilar** |
 | `ORIGENES_PERMITIDOS` | dominio de Netlify | no | CORS. Sin esto el navegador bloquea las llamadas |
@@ -55,6 +55,67 @@ corre como un servicio aparte en Railway y necesita leer datos de todos los
 usuarios para decidir a quién avisar. Vive solo en el entorno de ese cron:
 nunca en Netlify, nunca en el servicio web de Railway, y jamás en una
 variable `NEXT_PUBLIC_*`. Ver `docs/avisos.md`.
+
+---
+
+## Quién puede gastar tu dinero en las rutas de IA
+
+**No hace falta ninguna variable nueva.** La regla la decide una que ya
+existe:
+
+> Si el servicio que atiende `/api/ai/*` (Railway) tiene las dos
+> `NEXT_PUBLIC_SUPABASE_*`, sus rutas **exigen sesión iniciada**. Si no las
+> tiene, siguen abiertas.
+
+Esto importa porque `ORIGENES_PERMITIDOS` **no protege el endpoint**: CORS
+solo le dice al navegador de otra pestaña que no lea la respuesta. Un `curl`
+contra el dominio público de Railway no manda `Origin` y entraba sin más, y
+cada llamada gasta dinero real en Anthropic y en el proveedor de
+transcripción.
+
+Tres consecuencias prácticas al desplegar:
+
+1. **Pon las dos `NEXT_PUBLIC_SUPABASE_*` también en Railway**, no solo en
+   Netlify (ya estaban en la tabla, pero antes solo servían para el render;
+   ahora son además la cerradura). Y recuerda que se incrustan al compilar:
+   declararlas después no surte efecto.
+2. **Las dos piezas tienen que apuntar al MISMO proyecto de Supabase.** Si
+   Netlify firma con un proyecto y Railway valida contra otro, el token no
+   vale y todas las llamadas de IA dan 401. Se ve venir sin pulsar nada:
+   `GET /api/ai/estado` con la cabecera `Authorization` devuelve
+   `"requiereSesion": true` y `"sesion": false`.
+3. **`GET /api/ai/estado` sigue abierto** a propósito: es el healthcheck de
+   `railway.json` y lo que la interfaz consulta para saber si tiene que pedir
+   que inicies sesión.
+
+### Comprobarlo desde fuera
+
+```
+# Sin sesión: rechazo claro, y sin gastar un céntimo.
+curl -i -X POST https://TU-APP.up.railway.app/api/ai/plan \
+  -H 'Content-Type: application/json' -d '{"ficha":"x"}'
+# HTTP/1.1 401 Unauthorized
+# {"error":"sin_sesion","mensaje":"Necesitas haber iniciado sesión para usar esto."}
+
+# El estado dice si este servidor pide sesión:
+curl https://TU-APP.up.railway.app/api/ai/estado
+# {"disponible":true,...,"requiereSesion":true,"sesion":false}
+```
+
+Si el 401 no aparece y sale la respuesta del modelo, a ese servicio le faltan
+las `NEXT_PUBLIC_SUPABASE_*`: sus rutas de IA están abiertas al mundo.
+
+### Qué NO protege esto
+
+- **No hay límite de gasto por usuario ni por IP.** Cualquiera con cuenta en
+  tu proyecto de Supabase puede llamar tantas veces como quiera, y la factura
+  es tuya. Si dejas el registro abierto en Supabase, esto es una puerta con
+  cerradura y la llave puesta: cualquiera se crea una cuenta. Para un
+  despliegue personal, ten el registro cerrado (Authentication → Providers →
+  *Allow new users to sign up* desactivado) o restringido a tu dominio.
+- No es un cortafuegos: quien tenga una sesión válida sigue pudiendo abusar.
+  Un contador por usuario y ventana de tiempo está pendiente.
+- No cambia quién ve qué datos: eso lo sigue decidiendo la RLS.
 
 ---
 
@@ -90,9 +151,10 @@ error. Tras crear una cuenta desde la app, una fila.
 ## 2. Railway
 
 1. Nuevo proyecto desde el repositorio, rama de trabajo.
-2. Variables: `ANTHROPIC_API_KEY`, las dos `NEXT_PUBLIC_SUPABASE_*`,
-   `ORIGENES_PERMITIDOS` con el dominio de Netlify.
-   `NEXT_PUBLIC_IA_URL` se deja **sin definir**.
+2. Variables: `ANTHROPIC_API_KEY`, las dos `NEXT_PUBLIC_SUPABASE_*`
+   —las mismas que en Netlify: son las que hacen que las rutas de IA solo
+   atiendan a quien ha iniciado sesión—, `ORIGENES_PERMITIDOS` con el dominio
+   de Netlify. `NEXT_PUBLIC_IA_URL` se deja **sin definir**.
 3. Generar dominio público.
 
 `railway.json` ya fija el builder, los comandos y un healthcheck sobre
@@ -146,7 +208,13 @@ Desde el dominio de Netlify:
 - **Sin `TRANSCRIPCION_API_KEY`** el cante se graba, se guarda y se escucha
   igual; solo se apagan transcribir y comparar, diciendo por qué.
 - **Sin credenciales de Supabase** la app funciona entera en local, sin
-  login ni sincronización. Las grabaciones se quedan en el navegador.
+  login ni sincronización. Las grabaciones se quedan en el navegador, y las
+  rutas de IA quedan **abiertas** a quien sepa la URL: es lo correcto en
+  local o para un despliegue de un solo opositor, y una mala idea en un
+  dominio público con clave de Anthropic puesta.
+- **Con Supabase configurado y sin sesión iniciada** la app funciona entera
+  menos la IA, y lo avisa antes de dejar pulsar: "Inicia sesión para usar el
+  preparador".
 - Ninguna pantalla queda detrás de una guarda de sesión.
 
 ---
@@ -158,6 +226,8 @@ Desde el dominio de Netlify:
 | El chat se corta a media frase | Se está llamando a Netlify en vez de a Railway: `NEXT_PUBLIC_IA_URL` mal puesta o declarada después de compilar |
 | Error de CORS en la consola | `ORIGENES_PERMITIDOS` en Railway no incluye el dominio de Netlify |
 | Los botones de IA salen apagados | Falta `ANTHROPIC_API_KEY` en Railway, o `NEXT_PUBLIC_IA_URL` apunta a un sitio que no responde |
+| Todas las llamadas de IA dan 401 `sin_sesion` estando dentro | Netlify y Railway apuntan a proyectos de Supabase distintos, o Railway se compiló sin las `NEXT_PUBLIC_SUPABASE_*` y luego se añadieron. Compruébalo con `curl .../api/ai/estado -H "Authorization: Bearer <token>"`: `requiereSesion` y `sesion` tienen que ser los dos `true` |
+| La IA dice "Inicia sesión para usar el preparador" y sí has entrado | La sesión caducó y el navegador no la ha renovado: recarga. Si persiste, el reloj del servidor o el proyecto de Supabase no coinciden |
 | No aparece el bloque de sesión | Faltan las `NEXT_PUBLIC_SUPABASE_*`, o se declararon después de compilar |
 | No sale la casilla de grabar el cante | El navegador no soporta `MediaRecorder`, o la página no se sirve por HTTPS (fuera de `localhost`, `getUserMedia` exige contexto seguro) |
 | «Permissions policy violation: microphone» en consola | Un proxy o CDN delante está reescribiendo la cabecera `Permissions-Policy`. La app la manda como `microphone=(self)` desde `next.config.ts` |

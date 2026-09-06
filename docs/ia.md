@@ -68,7 +68,67 @@ Meter la ficha en el system prompt invalidaría la caché en cada mensaje.
 | `POST /api/ai/plan` | no streaming | texto |
 | `POST /api/ai/keypoints` | no streaming | JSON estructurado |
 | `POST /api/ai/dictamen` | no streaming | texto |
-| `GET /api/ai/estado` | — | `{ disponible, modelo, transcripcion, motorTranscripcion }` |
+| `GET /api/ai/estado` | — | `{ disponible, modelo, transcripcion, motorTranscripcion, requiereSesion, sesion }` |
+
+### Quién puede llamar (`lib/ai/guardia.ts`)
+
+Cada llamada de esas cuesta dinero de verdad: tokens de Anthropic y, en
+`/transcribir`, minutos del proveedor de audio. Hasta ahora lo único que
+había delante era CORS, y **CORS no protege un endpoint**: solo le dice al
+navegador de otra pestaña que no lea la respuesta. Un `curl` al dominio de
+Railway no manda `Origin` y entraba sin más.
+
+La regla es la misma degradación gradual que usa el resto de la app:
+
+> **Si el servidor que atiende la IA tiene Supabase configurado, sus rutas
+> exigen sesión válida. Si no lo tiene, siguen abiertas.**
+
+Así el desarrollo en local y el despliegue de un solo opositor —que no
+montan Supabase— funcionan exactamente igual que antes, sin muro ninguno.
+
+- La comprobación es de verdad: `usuarioDePeticion()` (`lib/supabase/ruta.ts`)
+  verifica la **firma** del JWT con `getClaims()`, no lo decodifica y se fía.
+- La credencial viaja en la cabecera `Authorization: Bearer <access_token>`,
+  porque estas llamadas salen a **otro dominio** (Netlify → Railway) y ahí el
+  navegador no manda las cookies de sesión. En el navegador la pone
+  `llamarIA()`/`pedirIA()` (`lib/ai/hooks.ts`), que son la única puerta por
+  la que se llama a `/api/ai/*`; ninguna pantalla hace `fetch` por su cuenta.
+- Sin sesión se responde **401** con `{ error: "sin_sesion" }` **antes de
+  leer el cuerpo**: no se gasta un céntimo. La respuesta lleva sus cabeceras
+  CORS, o el navegador la bloquearía y el opositor vería un error de red
+  opaco en vez del mensaje.
+- `GET /api/ai/estado` es la **única** que sigue abierta, a propósito: no
+  gasta dinero, la interfaz la necesita justo para saber que hace falta
+  iniciar sesión, y es el healthcheck de Railway (`railway.json`), que no
+  tiene credenciales. Publica `requiereSesion` (este servidor pide sesión) y
+  `sesion` (además, la credencial que ha llegado vale aquí). Lo segundo
+  delata el caso feo de que la web y la API apunten a proyectos de Supabase
+  distintos.
+
+En la interfaz, `useIA()` deriva de eso dos banderas: `bloqueado` (hace falta
+sesión y no la hay) y `listo` (hay clave y, si hace falta, sesión). Los
+botones miran `listo`, y `AvisoIA`/`NotaIA` (`components/AvisoIA.tsx`) dicen
+en español cuál de los dos motivos es y ofrecen el enlace de entrar. Nada
+queda pulsable para fallar después.
+
+### Lo que esto NO protege
+
+Conviene decirlo claro, porque es fácil leer "autenticación" y entender
+"seguro":
+
+- **No hay límite de gasto por usuario.** Cualquiera con cuenta en el
+  proyecto de Supabase puede llamar tantas veces como quiera, y el importe lo
+  paga quien despliega. Si algún día se abren registros al público hará falta
+  además un contador por usuario y por ventana de tiempo (y, probablemente,
+  cortar el registro abierto en Supabase).
+- **No hay límite por IP ni protección anti-abuso** más allá de exigir una
+  sesión.
+- **No cambia quién ve qué datos**: eso lo siguen decidiendo las políticas
+  RLS de Supabase (`db/schema.sql`).
+- **Sin Supabase configurado no protege nada**, por diseño. Un despliegue
+  público con `ANTHROPIC_API_KEY` y sin Supabase tiene las rutas abiertas al
+  que sepa la URL, igual que antes. Si el despliegue es público, configura
+  Supabase.
 
 ### Salida estructurada
 
@@ -179,6 +239,9 @@ opositores y cuarenta minutos no da rodeos.
   sesión iniciada, a un bucket privado donde cada uno solo ve su carpeta.
 - Sin clave, no sale nada del navegador y la app funciona entera menos estas
   cinco funciones, que lo avisan en pantalla.
+- Si la instalación tiene Supabase, las rutas de IA solo atienden a quien ha
+  iniciado sesión, y el servidor sabe **quién** llama (el `sub` del token).
+  No se guarda registro de las llamadas: se usa para dejar pasar, nada más.
 
 ---
 
@@ -186,6 +249,8 @@ opositores y cuarenta minutos no da rodeos.
 
 `lib/ai/client.ts` centraliza el manejo:
 
+- Sin sesión, cuando la instalación la exige → `401` con
+  `{ error: "sin_sesion" }`, antes de tocar nada.
 - Sin clave → `503` con mensaje explicando cómo configurarla.
 - `401` → "la clave no es válida". `429` → "prueba en unos segundos".
 - `stop_reason === "refusal"` → mensaje claro en vez de un JSON vacío. Con

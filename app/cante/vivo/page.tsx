@@ -24,7 +24,8 @@ import {
 } from "@/lib/audio/grabadora";
 import { guardarAudio } from "@/lib/audio/almacen";
 import { reloj } from "@/lib/utils/time";
-import { useFicha, useIA , rutaIA } from "@/lib/ai/hooks";
+import { useFicha, useIA, pedirIA } from "@/lib/ai/hooks";
+import { NotaIA } from "@/components/AvisoIA";
 import { construirDetalleCante } from "@/lib/ai/contexto";
 
 export default function PaginaCanteVivo() {
@@ -640,7 +641,10 @@ function Resumen({
       }
     }
 
-    if (analizar && ia.disponible) {
+    // `listo` y no `disponible`: si la instalación pide sesión y no la hay,
+    // el análisis daría 401 y el cante quedaría guardado con un error al
+    // lado. Se guarda igual, sin analizar, y la casilla ya lo avisaba.
+    if (analizar && ia.listo) {
       try {
         const detalle = construirDetalleCante(
           cante,
@@ -649,14 +653,10 @@ function Resumen({
           cantesPrevios,
           perfil.minutosPorTema,
         );
-        const r = await fetch(rutaIA("/api/ai/analisis-cante"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            detalleCante: detalle,
-            ficha: ficha(),
-            estilo: perfil.estiloFeedback,
-          }),
+        const r = await pedirIA("/api/ai/analisis-cante", {
+          detalleCante: detalle,
+          ficha: ficha(),
+          estilo: perfil.estiloFeedback,
         });
         const d = await r.json();
         if (r.ok) {
@@ -812,7 +812,10 @@ function Resumen({
           </label>
         )}
 
-        {ia.disponible && (
+        {/* Si lo que falta es la sesión se sigue enseñando la casilla, pero
+            apagada y con el motivo: hacerla desaparecer dejaría al opositor
+            preguntándose dónde está el análisis que vio la vez anterior. */}
+        {(ia.disponible || ia.bloqueado) && (
           <label className="flex items-start gap-3 mb-6 cursor-pointer px-4 py-3.5 rounded-[10px] border"
             style={{
               borderColor: "color-mix(in srgb, var(--laton) 32%, transparent)",
@@ -821,9 +824,10 @@ function Resumen({
           >
             <input
               type="checkbox"
-              checked={analizar}
+              checked={analizar && !ia.bloqueado}
+              disabled={ia.bloqueado}
               onChange={(e) => setAnalizar(e.target.checked)}
-              className="size-4 accent-[var(--laton)] mt-0.5"
+              className="size-4 accent-[var(--laton)] mt-0.5 disabled:opacity-40"
             />
             <span>
               <span className="text-[13.5px] font-medium flex items-center gap-2">
@@ -834,6 +838,11 @@ function Resumen({
                 Compara este cante con los anteriores del mismo tema y con tu ficha
                 completa, y te dice en qué hincar el codo.
               </span>
+              {ia.bloqueado && (
+                <span className="block mt-1.5">
+                  <NotaIA ia={ia} />
+                </span>
+              )}
             </span>
           </label>
         )}
@@ -853,7 +862,7 @@ function Resumen({
             cargando={guardando}
           >
             <Check className="size-4" />
-            {guardando && analizar && ia.disponible
+            {guardando && analizar && ia.listo
               ? "Guardando y analizando…"
               : "Guardar cante"}
           </Boton>

@@ -50,7 +50,8 @@ import { estadoEfectivo, intervaloDias, ultimoContacto } from "@/lib/data/srs";
 import { aEpigrafes, minutosEstimados, parsearEpigrafes } from "@/lib/data/parser";
 import { fecha, haceTexto, horasMin, reloj } from "@/lib/utils/time";
 import { plural } from "@/lib/utils/texto";
-import { useFicha, useIA , rutaIA } from "@/lib/ai/hooks";
+import { useFicha, useIA, pedirIA } from "@/lib/ai/hooks";
+import { NotaIA } from "@/components/AvisoIA";
 import { construirDetalleCante } from "@/lib/ai/contexto";
 import { TarjetaAnalisis } from "@/components/TarjetaAnalisis";
 import { GrabacionCante } from "@/components/GrabacionCante";
@@ -594,14 +595,10 @@ function PanelCantes({
         anteriores,
         perfil.minutosPorTema,
       );
-      const r = await fetch(rutaIA("/api/ai/analisis-cante"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          detalleCante: detalle,
-          ficha: ficha(),
-          estilo: perfil.estiloFeedback,
-        }),
+      const r = await pedirIA("/api/ai/analisis-cante", {
+        detalleCante: detalle,
+        ficha: ficha(),
+        estilo: perfil.estiloFeedback,
       });
       const d = await r.json();
       if (!r.ok) {
@@ -772,16 +769,12 @@ function PanelCantes({
                       variante="oro"
                       onClick={() => analizar(c)}
                       cargando={analizando === c.id}
-                      disabled={!ia.disponible || analizando !== null}
+                      disabled={!ia.listo || analizando !== null}
                     >
                       <Sparkles className="size-4" />
                       {analizando === c.id ? "Analizando…" : "Sacar conclusiones con IA"}
                     </Boton>
-                    {!ia.disponible && !ia.cargando && (
-                      <span className="text-[12px] text-subtle">
-                        Configura ANTHROPIC_API_KEY para activar el análisis.
-                      </span>
-                    )}
+                    <NotaIA ia={ia} />
                   </div>
                 )}
 
@@ -844,10 +837,9 @@ function PanelKeyPoints({
     setGenerando(true);
     setError(null);
     try {
-      const r = await fetch(rutaIA("/api/ai/keypoints"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ texto: textoTema, tema: tema.titulo }),
+      const r = await pedirIA("/api/ai/keypoints", {
+        texto: textoTema,
+        tema: tema.titulo,
       });
       const d = await r.json();
       if (!r.ok) {
@@ -867,17 +859,19 @@ function PanelKeyPoints({
       <Card>
         <TituloSeccion
           accion={
-            ia.disponible && (
+            (ia.disponible || ia.bloqueado) && (
               <Boton
                 tam="sm"
                 variante="oro"
                 onClick={generar}
                 cargando={generando}
-                disabled={textoTema.length < 60}
+                disabled={textoTema.length < 60 || ia.bloqueado}
                 title={
-                  textoTema.length < 60
-                    ? "Necesitas texto en los epígrafes para poder extraer keypoints"
-                    : undefined
+                  ia.bloqueado
+                    ? "Inicia sesión para usar la IA"
+                    : textoTema.length < 60
+                      ? "Necesitas texto en los epígrafes para poder extraer keypoints"
+                      : undefined
                 }
               >
                 <Sparkles className="size-3.5" />
