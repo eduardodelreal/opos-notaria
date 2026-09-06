@@ -1,5 +1,15 @@
 import type { Cante, EstadoTema, ProgresoTema, Sesion, Tema } from "./types";
 import { DIA_MS, claveDia, inicioSemana } from "../utils/time";
+import { temasVivos, vivos, vivosMapa } from "./vivos";
+
+/*
+   Estas funciones reciben colecciones del store, y el store guarda las
+   tumbas del borrado lógico. Filtran en la entrada —`vivos()` devuelve el
+   mismo array cuando no hay ninguna, así que no cuesta nada— para que un
+   tema borrado no reaparezca en la cola de repaso ni sume en las
+   estadísticas. Las `sesiones` no se filtran: no tienen tumba y sobreviven
+   al borrado del tema a propósito.
+*/
 
 /* ============================================================
    Repaso espaciado adaptado a oposicion
@@ -75,9 +85,10 @@ export function colaDeRepaso(
   progresos: Record<string, ProgresoTema>,
   limite = 12,
 ): ItemCola[] {
-  return temas
+  const vivosProgresos = vivosMapa(progresos);
+  return temasVivos(temas)
     .map((tema) => {
-      const progreso = progresos[tema.id];
+      const progreso = vivosProgresos[tema.id];
       if (!progreso || progreso.estado === "nuevo") return null;
       const ultimo = ultimoContacto(progreso);
       return {
@@ -133,8 +144,8 @@ export function resumenGlobal(
   };
 
   let pesoAcumulado = 0;
-  for (const tema of temas) {
-    const p = progresos[tema.id];
+  for (const tema of temasVivos(temas)) {
+    const p = vivosMapa(progresos)[tema.id];
     const estado = p ? estadoEfectivo(p, diasOxido) : "nuevo";
     porEstado[estado] += 1;
     pesoAcumulado += PESO_ESTADO[estado];
@@ -154,20 +165,23 @@ export function resumenGlobal(
     if (s.inicio >= desdeHoy) segundosHoy += s.segundos;
   }
 
-  const notas = cantes.map((c) => c.nota).filter((n): n is number => n != null);
+  const vivosCantes = vivos(cantes);
+  const notas = vivosCantes.map((c) => c.nota).filter((n): n is number => n != null);
 
   return {
-    totalTemas: temas.length,
+    totalTemas: temasVivos(temas).length,
     porEstado,
     segundosTotales,
     segundosSemana,
     segundosHoy,
     racha: calcularRacha(sesiones),
-    cantesTotales: cantes.length,
+    cantesTotales: vivosCantes.length,
     notaMedia: notas.length
       ? Number((notas.reduce((a, b) => a + b, 0) / notas.length).toFixed(1))
       : null,
-    avance: temas.length ? (pesoAcumulado / temas.length) * 100 : 0,
+    avance: temasVivos(temas).length
+      ? (pesoAcumulado / temasVivos(temas).length) * 100
+      : 0,
   };
 }
 
@@ -227,14 +241,14 @@ export function statsPorMateria(
 ): StatsMateria[] {
   const mapa = new Map<string, StatsMateria & { peso: number; notas: number[] }>();
   const cantesPorTema = new Map<string, number[]>();
-  for (const c of cantes) {
+  for (const c of vivos(cantes)) {
     if (c.nota == null) continue;
     const arr = cantesPorTema.get(c.temaId) ?? [];
     arr.push(c.nota);
     cantesPorTema.set(c.temaId, arr);
   }
 
-  for (const tema of temas) {
+  for (const tema of temasVivos(temas)) {
     const acc =
       mapa.get(tema.materiaId) ??
       ({
@@ -248,7 +262,7 @@ export function statsPorMateria(
         notas: [],
       } as StatsMateria & { peso: number; notas: number[] });
 
-    const p = progresos[tema.id];
+    const p = vivosMapa(progresos)[tema.id];
     const estado = p ? estadoEfectivo(p, diasOxido) : "nuevo";
     acc.temas += 1;
     acc.peso += PESO_ESTADO[estado];
@@ -292,16 +306,18 @@ export function predecirFinalizacion(
   const ventana = 8 * 7 * DIA_MS;
   const desde = Date.now() - ventana;
 
-  const dominadosRecientes = temas.filter((t) => {
-    const p = progresos[t.id];
+  const vivosTemas = temasVivos(temas);
+  const vivosProgresos = vivosMapa(progresos);
+  const dominadosRecientes = vivosTemas.filter((t) => {
+    const p = vivosProgresos[t.id];
     if (!p || p.estado !== "dominado") return false;
     const ultimo = ultimoContacto(p);
     return !!ultimo && ultimo >= desde;
   }).length;
 
   const temasPorSemana = Number((dominadosRecientes / 8).toFixed(2));
-  const pendientes = temas.filter((t) => {
-    const p = progresos[t.id];
+  const pendientes = vivosTemas.filter((t) => {
+    const p = vivosProgresos[t.id];
     return !p || p.estado !== "dominado";
   }).length;
 
@@ -344,23 +360,25 @@ export function detectarLagunas(
   limite = 6,
 ): Laguna[] {
   const porTema = new Map<string, number[]>();
-  for (const c of cantes) {
+  for (const c of vivos(cantes)) {
     if (c.nota == null) continue;
     const arr = porTema.get(c.temaId) ?? [];
     arr.push(c.nota);
     porTema.set(c.temaId, arr);
   }
 
+  const vivosTemas = temasVivos(temas);
+  const vivosProgresos = vivosMapa(progresos);
   const horasMedias =
-    temas.reduce((acc, t) => acc + (progresos[t.id]?.segundos ?? 0), 0) /
-    Math.max(1, temas.length);
+    vivosTemas.reduce((acc, t) => acc + (vivosProgresos[t.id]?.segundos ?? 0), 0) /
+    Math.max(1, vivosTemas.length);
 
   const salida: Laguna[] = [];
-  for (const tema of temas) {
+  for (const tema of vivosTemas) {
     const notas = porTema.get(tema.id);
     if (!notas || notas.length < 2) continue;
     const media = notas.reduce((a, b) => a + b, 0) / notas.length;
-    const segundos = progresos[tema.id]?.segundos ?? 0;
+    const segundos = vivosProgresos[tema.id]?.segundos ?? 0;
     if (media >= 6.5) continue;
     if (segundos < horasMedias) continue;
     salida.push({
@@ -386,7 +404,7 @@ export function epigrafesProblematicos(
     string,
     { titulo: string; temaId: string; fallos: number; veces: number }
   >();
-  for (const c of cantes) {
+  for (const c of vivos(cantes)) {
     for (const e of c.epigrafes) {
       const clave = `${c.temaId}::${e.epigrafeId}`;
       const acc =

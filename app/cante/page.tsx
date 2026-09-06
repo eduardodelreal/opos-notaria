@@ -4,7 +4,14 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mic, Search, Shuffle } from "lucide-react";
-import { useProgresos, useStore, temasOrdenados } from "@/lib/store/store";
+import {
+  temasOrdenados,
+  useCantes,
+  useMaterias,
+  useProgresos,
+  useStore,
+  useTemas,
+} from "@/lib/store/store";
 import { materiasOrdenadas } from "@/lib/data/materias";
 import { Cabecera } from "@/components/Shell";
 import { Badge, Boton, Card, Punto, TituloSeccion, Vacio, cx } from "@/components/ui";
@@ -15,7 +22,10 @@ import { plural } from "@/lib/utils/texto";
 
 export default function ElegirCante() {
   const router = useRouter();
-  const { temas, materias: materiasSinOrdenar, perfil, cantes } = useStore();
+  const perfil = useStore((s) => s.perfil);
+  const temas = useTemas();
+  const materiasSinOrdenar = useMaterias();
+  const cantes = useCantes();
   const progresos = useProgresos();
   const materias = React.useMemo(
     () => materiasOrdenadas(materiasSinOrdenar),

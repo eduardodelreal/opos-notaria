@@ -2,7 +2,13 @@
 
 import * as React from "react";
 import { Play, Timer } from "lucide-react";
-import { useStore, temasOrdenados } from "@/lib/store/store";
+import {
+  temasOrdenados,
+  useMaterias,
+  useSesiones,
+  useStore,
+  useTemas,
+} from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
   Boton,
@@ -25,7 +31,10 @@ const POMODOROS = [
 ];
 
 export default function Cronos() {
-  const { temas, materias, sesiones, crono } = useStore();
+  const temas = useTemas();
+  const materias = useMaterias();
+  const sesiones = useSesiones();
+  const crono = useStore((s) => s.crono);
   const iniciarCrono = useStore((s) => s.iniciarCrono);
 
   const [temaId, setTemaId] = React.useState("");

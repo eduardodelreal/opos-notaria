@@ -91,5 +91,8 @@ que se pone en rojo.
 - Los permisos reales de Supabase sobre `auth.users` y `storage.objects` (crear
   el trigger `al_crear_usuario`, crear políticas). Aquí se corre como
   superusuario, así que todo está permitido; en Supabase depende del rol.
+- El envío de los avisos push: aquí solo se prueba el almacén (`vueltas`,
+  `suscripciones_aviso` y las preferencias de `perfiles`). Que un endpoint
+  caducado se marque de verdad depende de un proceso que todavía no existe.
 - La RLS de `storage.buckets` (en Supabase está activada y no hay política, así
   que un cliente no lista buckets; aquí no se reproduce).

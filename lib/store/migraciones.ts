@@ -2,7 +2,6 @@ import { uid } from "../utils/id";
 import type {
   Cante,
   Epigrafe,
-  EpigrafeBorrado,
   KeyPoint,
   Materia,
   MensajeChat,
@@ -16,7 +15,12 @@ import type {
 } from "../data/types";
 
 /* ============================================================
-   Migración v1 → v2 del expediente guardado en IndexedDB
+   Migraciones del expediente guardado en IndexedDB
+
+   Van encadenadas: un expediente v1 pasa por las dos, uno v2 solo por la
+   segunda (`migrarARelojes`, al final del fichero).
+
+   --- v1 → v2 -------------------------------------------------
 
    El modelo v1 generaba ids tipo `tem_lx9f3kq2a` y daba a las materias
    precargadas un slug (`civil`, `mercantil`) idéntico en todas las
@@ -34,16 +38,37 @@ import type {
    y los registros de `vueltas`.
    ============================================================ */
 
-type MateriaV1 = Omit<Materia, "orden"> & { orden?: number };
-type EpigrafeV1 = Omit<Epigrafe, "creado" | "actualizado"> & {
-  creado?: number;
-  actualizado?: number;
-};
-type TemaV1 = Omit<Tema, "epigrafes"> & { epigrafes?: EpigrafeV1[] };
-type NotaV1 = Omit<Nota, "actualizado" | "creado"> & {
-  creado?: number;
-  actualizado?: number;
-};
+/**
+ * `actualizado` no existía antes de la v3: en los tipos intermedios de la
+ * migración es opcional, y `migrarARelojes` es quien lo hace obligatorio.
+ */
+type SinReloj<T> = Omit<T, "actualizado"> & { actualizado?: number };
+
+type MateriaV1 = SinReloj<Omit<Materia, "orden"> & { orden?: number }>;
+type EpigrafeV1 = SinReloj<Omit<Epigrafe, "creado">> & { creado?: number };
+type TemaV1 = SinReloj<Omit<Tema, "epigrafes">> & { epigrafes?: EpigrafeV1[] };
+type NotaV1 = SinReloj<Omit<Nota, "creado">> & { creado?: number };
+
+type MateriaV2 = SinReloj<Materia>;
+type EpigrafeV2 = SinReloj<Epigrafe>;
+type TemaV2 = SinReloj<Omit<Tema, "epigrafes">> & { epigrafes: EpigrafeV2[] };
+type CanteV2 = SinReloj<Cante>;
+type KeyPointV2 = SinReloj<KeyPoint>;
+type NotaV2 = SinReloj<Nota>;
+type SimulacroV2 = SinReloj<Simulacro>;
+type ProgresoV2 = SinReloj<ProgresoTema>;
+type VueltaV2 = SinReloj<Vuelta>;
+
+/**
+ * Las tumbas de epígrafe vivían en un array aparte en la v2. En la v3 son
+ * el propio epígrafe con `borrado`, porque la tumba tiene que llevar id y
+ * reloj para poder empujarse al servidor y el array suelto no los tenía.
+ */
+interface EpigrafeBorradoV2 {
+  id: string;
+  temaId: string;
+  borrado: number;
+}
 
 interface CronoV1 {
   tipo: string;
@@ -58,18 +83,37 @@ export interface ExpedienteV1 {
   perfil?: Perfil;
   materias?: MateriaV1[];
   temas?: TemaV1[];
-  progresos?: Record<string, ProgresoTema>;
+  progresos?: Record<string, ProgresoV2>;
   sesiones?: Sesion[];
-  cantes?: Cante[];
-  keypoints?: KeyPoint[];
+  cantes?: SinReloj<Cante>[];
+  keypoints?: SinReloj<KeyPoint>[];
   notas?: NotaV1[];
-  simulacros?: Simulacro[];
+  simulacros?: SinReloj<Simulacro>[];
   chat?: MensajeChat[];
   crono?: CronoV1 | null;
   [otros: string]: unknown;
 }
 
 export interface ExpedienteV2 {
+  perfil?: Perfil;
+  materias: MateriaV2[];
+  temas: TemaV2[];
+  progresos: Record<string, ProgresoV2>;
+  sesiones: Sesion[];
+  cantes: CanteV2[];
+  keypoints: KeyPointV2[];
+  notas: NotaV2[];
+  simulacros: SimulacroV2[];
+  chat: MensajeChat[];
+  vueltas: VueltaV2[];
+  /** Solo lo trae un expediente guardado con la v2. */
+  epigrafesBorrados?: EpigrafeBorradoV2[];
+  crono: CronoV1 | null;
+  [otros: string]: unknown;
+}
+
+/** El expediente ya con todos los relojes puestos. Es lo que usa el store. */
+export interface ExpedienteV3 {
   perfil?: Perfil;
   materias: Materia[];
   temas: Tema[];
@@ -81,7 +125,6 @@ export interface ExpedienteV2 {
   simulacros: Simulacro[];
   chat: MensajeChat[];
   vueltas: Vuelta[];
-  epigrafesBorrados: EpigrafeBorrado[];
   crono: CronoV1 | null;
   [otros: string]: unknown;
 }
@@ -122,7 +165,7 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
   /* ---------------- materias ---------------- */
   // El orden era la posición en el array; se materializa tal cual estaba
   // para que la barra lateral no se reordene delante del usuario.
-  const materias: Materia[] = lista<MateriaV1>(guardado.materias).map((m, i) => ({
+  const materias: MateriaV2[] = lista<MateriaV1>(guardado.materias).map((m, i) => ({
     ...m,
     id: ref("materia", m.id),
     orden: typeof m.orden === "number" ? m.orden : i,
@@ -132,7 +175,7 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
   // Los epígrafes no tenían timestamps. Se sellan con la hora de la
   // migración: es lo único comprobable, y basta para el last-write-wins
   // (cualquier edición posterior avanzará el reloj).
-  const temas: Tema[] = lista<TemaV1>(guardado.temas).map((t) => ({
+  const temas: TemaV2[] = lista<TemaV1>(guardado.temas).map((t) => ({
     ...t,
     id: ref("tema", t.id),
     materiaId: ref("materia", t.materiaId),
@@ -152,7 +195,7 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
     guardado.progresos && typeof guardado.progresos === "object"
       ? guardado.progresos
       : {};
-  const progresos: Record<string, ProgresoTema> = {};
+  const progresos: Record<string, ProgresoV2> = {};
   for (const [temaIdViejo, p] of Object.entries(progresosV1)) {
     const temaId = ref("tema", temaIdViejo);
     progresos[temaId] = { ...p, temaId };
@@ -167,7 +210,7 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
   // para que el registro exista y pueda sincronizarse. No afecta a nada
   // visible: `vueltas` se usa como número, nunca como serie temporal.
   const inicioExpediente = guardado.perfil?.fechaInicio ?? ahora;
-  const vueltas: Vuelta[] = [];
+  const vueltas: VueltaV2[] = [];
   for (const p of Object.values(progresos)) {
     const cuantas = Math.max(0, Math.floor(p.vueltas ?? 0));
     const fecha = p.ultimoCante ?? p.ultimoEstudio ?? inicioExpediente;
@@ -183,7 +226,7 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
     temaId: refOpc("tema", s.temaId),
   }));
 
-  const cantes: Cante[] = lista<Cante>(guardado.cantes).map((c) => ({
+  const cantes: CanteV2[] = lista<CanteV2>(guardado.cantes).map((c) => ({
     ...c,
     id: ref("cante", c.id),
     temaId: ref("tema", c.temaId),
@@ -194,14 +237,14 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
     })),
   }));
 
-  const keypoints: KeyPoint[] = lista<KeyPoint>(guardado.keypoints).map((k) => ({
+  const keypoints: KeyPointV2[] = lista<KeyPointV2>(guardado.keypoints).map((k) => ({
     ...k,
     id: ref("keypoint", k.id),
     temaId: ref("tema", k.temaId),
     epigrafeId: refOpc("epigrafe", k.epigrafeId),
   }));
 
-  const notas: Nota[] = lista<NotaV1>(guardado.notas).map((n) => ({
+  const notas: NotaV2[] = lista<NotaV1>(guardado.notas).map((n) => ({
     ...n,
     id: ref("nota", n.id),
     temaId: ref("tema", n.temaId),
@@ -210,7 +253,7 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
     actualizado: n.actualizado ?? n.creado ?? ahora,
   }));
 
-  const simulacros: Simulacro[] = lista<Simulacro>(guardado.simulacros).map((s) => ({
+  const simulacros: SimulacroV2[] = lista<SimulacroV2>(guardado.simulacros).map((s) => ({
     ...s,
     id: ref("simulacro", s.id),
     // temaIds y notas se corresponden índice a índice: se mapea sin
@@ -244,9 +287,134 @@ export function migrarAUuid(guardado: ExpedienteV1): ResultadoMigracion {
       simulacros,
       chat,
       vueltas,
-      epigrafesBorrados: [],
       crono,
     },
     mapa,
+  };
+}
+
+/* ============================================================
+   Migración v2 → v3: relojes en todas las entidades mutables y
+   borrado lógico
+
+   La v2 solo tenía `actualizado` en `Nota` y `Epigrafe`. El push manda el
+   `actualizado` de cada fila y el servidor arbitra con él (§3.1 y §4 de
+   docs/sincronizacion.md): una fila sin reloj no se puede empujar sin
+   inventárselo, y lo que se invente decide quién gana los conflictos.
+
+   Criterio: NUNCA la hora de la migración cuando hay un dato real de la
+   fila, porque sellarlo todo "ahora" haría que el dispositivo que abra la
+   app más tarde ganase todos los conflictos por el mero hecho de abrirla.
+   Por eso cada entidad usa lo más cercano que tiene a "cuándo se tocó esto
+   por última vez":
+
+     · Cante y Simulacro  → su `fecha`. Se crean y se corrigen ahí mismo.
+     · KeyPoint           → la última respuesta, que se puede reconstruir:
+                            `proximoRepaso - intervaloDias` es exactamente
+                            el momento en que se contestó la tarjeta. Si no
+                            se ha contestado nunca, su `creado`.
+     · ProgresoTema       → el último contacto con el tema (último cante o
+                            último estudio), que es lo que mueve la fila.
+     · Nota y Epigrafe    → ya lo tenían; solo se completa si falta.
+     · Materia y Tema     → no hay ni un dato de fecha por fila. Se usa el
+                            arranque del expediente (`perfil.fechaInicio`):
+                            es antiguo y por tanto conservador — ante un
+                            conflicto pierde contra cualquier edición real
+                            de otro dispositivo, que es justo lo que se
+                            quiere cuando no se sabe nada.
+
+   Y las tumbas de epígrafe del array suelto `epigrafesBorrados` se pliegan
+   dentro del tema, que es donde viven ahora.
+   ============================================================ */
+
+const DIA = 86_400_000;
+
+/** Momento en que se contestó por última vez una tarjeta, si se contestó. */
+function ultimaRespuesta(k: KeyPointV2): number | undefined {
+  if (!k.aciertos && !k.fallos) return undefined;
+  const t = k.proximoRepaso - (k.intervaloDias || 1) * DIA;
+  return Number.isFinite(t) && t > 0 ? t : undefined;
+}
+
+export function migrarARelojes(guardado: ExpedienteV2): ExpedienteV3 {
+  const ahora = Date.now();
+  // Suelo conservador para lo que no tiene fecha propia.
+  const inicio = Math.min(guardado.perfil?.fechaInicio ?? ahora, ahora);
+
+  // Las tumbas sueltas, indexadas por tema para plegarlas de una pasada.
+  const tumbas = new Map<string, EpigrafeBorradoV2[]>();
+  for (const t of lista<EpigrafeBorradoV2>(guardado.epigrafesBorrados)) {
+    const arr = tumbas.get(t.temaId) ?? [];
+    arr.push(t);
+    tumbas.set(t.temaId, arr);
+  }
+
+  const temas: Tema[] = lista<TemaV2>(guardado.temas).map((t) => {
+    const epigrafes: Epigrafe[] = lista<EpigrafeV2>(t.epigrafes).map((e) => ({
+      ...e,
+      creado: e.creado ?? inicio,
+      actualizado: e.actualizado ?? e.creado ?? inicio,
+    }));
+    const presentes = new Set(epigrafes.map((e) => e.id));
+    for (const tumba of tumbas.get(t.id) ?? []) {
+      if (presentes.has(tumba.id)) continue;
+      // De la fila borrada solo se conservaba el id: para sincronizar basta
+      // (lo que viaja es id + deleted_at + updated_at) y nada de la app la
+      // lee, porque todas las lecturas filtran por `borrado`.
+      epigrafes.push({
+        id: tumba.id,
+        orden: 0,
+        titulo: "",
+        creado: tumba.borrado,
+        actualizado: tumba.borrado,
+        borrado: tumba.borrado,
+      });
+    }
+    return { ...t, epigrafes, actualizado: t.actualizado ?? inicio };
+  });
+
+  const progresos: Record<string, ProgresoTema> = {};
+  for (const [temaId, p] of Object.entries(guardado.progresos ?? {})) {
+    const contacto = Math.max(p.ultimoCante ?? 0, p.ultimoEstudio ?? 0);
+    progresos[temaId] = {
+      ...p,
+      actualizado: p.actualizado ?? (contacto > 0 ? contacto : inicio),
+    };
+  }
+
+  return {
+    ...guardado,
+    materias: lista<MateriaV2>(guardado.materias).map((m) => ({
+      ...m,
+      actualizado: m.actualizado ?? inicio,
+    })),
+    temas,
+    progresos,
+    sesiones: lista<Sesion>(guardado.sesiones),
+    cantes: lista<CanteV2>(guardado.cantes).map((c) => ({
+      ...c,
+      actualizado: c.actualizado ?? c.fecha ?? inicio,
+    })),
+    keypoints: lista<KeyPointV2>(guardado.keypoints).map((k) => ({
+      ...k,
+      actualizado: k.actualizado ?? ultimaRespuesta(k) ?? k.creado ?? inicio,
+    })),
+    notas: lista<NotaV2>(guardado.notas).map((n) => ({
+      ...n,
+      actualizado: n.actualizado ?? n.creado ?? inicio,
+    })),
+    simulacros: lista<SimulacroV2>(guardado.simulacros).map((s) => ({
+      ...s,
+      actualizado: s.actualizado ?? s.fecha ?? inicio,
+    })),
+    // Una vuelta no se edita: su reloj es la fecha en que se cerró.
+    vueltas: lista<VueltaV2>(guardado.vueltas).map((v) => ({
+      ...v,
+      actualizado: v.actualizado ?? v.fecha ?? inicio,
+    })),
+    chat: lista<MensajeChat>(guardado.chat),
+    crono: guardado.crono ?? null,
+    // El array suelto desaparece: sus tumbas ya están dentro de los temas.
+    epigrafesBorrados: undefined,
   };
 }

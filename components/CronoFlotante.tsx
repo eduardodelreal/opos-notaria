@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Pause, Play, Square, Trash2 } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useStore, useTemas } from "@/lib/store/store";
 import { reloj } from "@/lib/utils/time";
 import { Boton, cx } from "./ui";
 
@@ -16,7 +16,7 @@ const INACTIVIDAD_MIN = 6;
  */
 export function CronoFlotante() {
   const crono = useStore((s) => s.crono);
-  const temas = useStore((s) => s.temas);
+  const temas = useTemas();
   const pausar = useStore((s) => s.pausarCrono);
   const reanudar = useStore((s) => s.reanudarCrono);
   const parar = useStore((s) => s.pararCrono);

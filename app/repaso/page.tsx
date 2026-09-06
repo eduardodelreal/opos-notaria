@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { Brain, Check, Eye, Play, RotateCcw, X } from "lucide-react";
-import { useProgresos, useStore } from "@/lib/store/store";
+import { useKeyPoints, useMaterias, useProgresos, useStore, useTemas } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
   Badge,
@@ -24,10 +24,10 @@ import { plural } from "@/lib/utils/texto";
 
 export default function Repaso() {
   const [pestana, setPestana] = React.useState<"temas" | "keypoints">("temas");
-  const temas = useStore((s) => s.temas);
+  const temas = useTemas();
   const progresos = useProgresos();
   const perfil = useStore((s) => s.perfil);
-  const keypoints = useStore((s) => s.keypoints);
+  const keypoints = useKeyPoints();
 
   const cola = React.useMemo(
     () => colaDeRepaso(temas, progresos, 40),
@@ -90,8 +90,8 @@ function ColaTemas({
   cola: ReturnType<typeof colaDeRepaso>;
 }) {
   const perfil = useStore((s) => s.perfil);
-  const temas = useStore((s) => s.temas);
-  const materias = useStore((s) => s.materias);
+  const temas = useTemas();
+  const materias = useMaterias();
   const iniciarCrono = useStore((s) => s.iniciarCrono);
 
   if (!cola.length) {
@@ -214,8 +214,8 @@ function ColaTemas({
 /* ========================================================================== */
 
 function DrillKeyPoints() {
-  const keypoints = useStore((s) => s.keypoints);
-  const temas = useStore((s) => s.temas);
+  const keypoints = useKeyPoints();
+  const temas = useTemas();
   const responder = useStore((s) => s.responderKeyPoint);
 
   const [cola, setCola] = React.useState<string[]>([]);

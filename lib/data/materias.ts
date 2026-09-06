@@ -2,7 +2,7 @@ import type { Materia } from "./types";
 import { uid } from "../utils/id";
 
 /** Las cinco materias clásicas de Notarías, sin id: el id lo pone la siembra. */
-const PLANTILLA: Omit<Materia, "id" | "orden">[] = [
+const PLANTILLA: Omit<Materia, "id" | "orden" | "actualizado">[] = [
   {
     nombre: "Derecho Civil",
     abrev: "CIV",
@@ -53,7 +53,8 @@ const PLANTILLA: Omit<Materia, "id" | "orden">[] = [
  * suyos.
  */
 export function materiasIniciales(): Materia[] {
-  return PLANTILLA.map((m, i) => ({ ...m, id: uid(), orden: i }));
+  const ahora = Date.now();
+  return PLANTILLA.map((m, i) => ({ ...m, id: uid(), orden: i, actualizado: ahora }));
 }
 
 /** Orden estable de las materias. La posición en el array ya no manda. */

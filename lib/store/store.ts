@@ -13,13 +13,19 @@ import {
   segundosDeTema,
   vueltasDeTema,
 } from "../data/derivados";
-import { migrarAUuid, type ExpedienteV1 } from "./migraciones";
+import { temasVivos, vivos, vivosMapa } from "../data/vivos";
+import { sellar } from "./sellado";
+import {
+  migrarARelojes,
+  migrarAUuid,
+  type ExpedienteV1,
+  type ExpedienteV2,
+} from "./migraciones";
 import type {
   AnalisisCante,
   Cante,
   CanteEpigrafe,
   Epigrafe,
-  EpigrafeBorrado,
   EstadoTema,
   KeyPoint,
   Materia,
@@ -73,8 +79,6 @@ interface Estado {
   simulacros: Simulacro[];
   /** Append-only: una fila por cada transición a "dominado". */
   vueltas: Vuelta[];
-  /** Tumbas de epígrafes borrados, para que el borrado pueda viajar. */
-  epigrafesBorrados: EpigrafeBorrado[];
   chat: MensajeChat[];
   crono: CronoActivo | null;
 }
@@ -122,7 +126,7 @@ interface Acciones {
 
   // --- cantes ---
   guardarCante: (
-    cante: Omit<Cante, "id" | "fecha"> & { fecha?: number },
+    cante: Omit<Cante, "id" | "fecha" | "actualizado"> & { fecha?: number },
   ) => Cante;
   updateCante: (id: string, parcial: Partial<Cante>) => void;
   setAnalisisCante: (id: string, analisis: AnalisisCante) => void;
@@ -145,7 +149,7 @@ interface Acciones {
   removeNota: (id: string) => void;
 
   // --- simulacros ---
-  addSimulacro: (s: Omit<Simulacro, "id">) => Simulacro;
+  addSimulacro: (s: Omit<Simulacro, "id" | "actualizado">) => Simulacro;
   updateSimulacro: (id: string, parcial: Partial<Simulacro>) => void;
   removeSimulacro: (id: string) => void;
 
@@ -173,7 +177,6 @@ const ESTADO_INICIAL: Estado = {
   notas: [],
   simulacros: [],
   vueltas: [],
-  epigrafesBorrados: [],
   chat: [],
   crono: null,
 };
@@ -185,6 +188,89 @@ function progresoVacio(temaId: string): ProgresoTema {
     segundos: 0,
     dificultad: 3,
     vueltas: 0,
+    actualizado: Date.now(),
+  };
+}
+
+/* ---------------- borrado lógico ----------------
+
+   Borrar es poner `borrado`, nunca sacar la fila del array: un borrado
+   físico no deja nada que empujar y el otro dispositivo resucitaría la
+   fila en el siguiente pull (docs/sincronizacion.md §7). El reloj de la
+   tumba lo pone el sellado, porque marcarla es una modificación como
+   cualquier otra.
+
+   Estas funciones devuelven el array original cuando no hay nada que
+   marcar: así el sellado no tiene ni que mirarlo.
+   ---------------------------------------------- */
+
+function marcarBorradas<T extends { id: string; borrado?: number }>(
+  filas: T[],
+  ids: Set<string>,
+  ahora: number,
+): T[] {
+  let cambia = false;
+  const salida = filas.map((f) => {
+    if (!ids.has(f.id) || f.borrado != null) return f;
+    cambia = true;
+    return { ...f, borrado: ahora };
+  });
+  return cambia ? salida : filas;
+}
+
+function marcarPorTema<T extends { temaId: string; borrado?: number }>(
+  filas: T[],
+  temas: Set<string>,
+  ahora: number,
+): T[] {
+  let cambia = false;
+  const salida = filas.map((f) => {
+    if (!temas.has(f.temaId) || f.borrado != null) return f;
+    cambia = true;
+    return { ...f, borrado: ahora };
+  });
+  return cambia ? salida : filas;
+}
+
+/**
+ * La misma cascada que hace el servidor en `cascada_borrado_tema()`.
+ *
+ * Está duplicada a propósito (§7 del contrato): si solo la hiciera el
+ * servidor, este dispositivo enseñaría los cantes y las notas de un tema
+ * que ya no existe hasta el siguiente pull.
+ *
+ * `sesiones` NO se cascadea, aquí ni allí: borrar un tema del programa no
+ * significa no haberlo estudiado, y esas horas son del opositor. Su
+ * `temaId` queda apuntando a un tema con tumba, que es exactamente lo que
+ * el contrato describe.
+ */
+function cascadaTemas(s: Estado, ids: Set<string>, ahora: number): Partial<Estado> {
+  if (!ids.size) return {};
+
+  const progresos = { ...s.progresos };
+  for (const temaId of ids) {
+    const p = progresos[temaId];
+    if (p && p.borrado == null) progresos[temaId] = { ...p, borrado: ahora };
+  }
+
+  return {
+    temas: s.temas.map((t) => {
+      if (!ids.has(t.id) || t.borrado != null) return t;
+      return {
+        ...t,
+        borrado: ahora,
+        // Los epígrafes son filas propias en el servidor: la cascada tiene
+        // que marcarlos uno a uno, no darlos por muertos con el tema.
+        epigrafes: t.epigrafes.map((e) =>
+          e.borrado == null ? { ...e, borrado: ahora } : e,
+        ),
+      };
+    }),
+    progresos,
+    cantes: marcarPorTema(s.cantes, ids, ahora),
+    keypoints: marcarPorTema(s.keypoints, ids, ahora),
+    notas: marcarPorTema(s.notas, ids, ahora),
+    vueltas: marcarPorTema(s.vueltas, ids, ahora),
   };
 }
 
@@ -223,31 +309,33 @@ export const useStore = create<Store>()(
           ejercicio: 1,
           descripcion: "",
           // Va al final de la lista: es donde el usuario la ve aparecer.
+          // Cuenta también las borradas para no reutilizar un `orden` que
+          // podría volver en un pull.
           orden: get().materias.reduce((max, m) => Math.max(max, m.orden), -1) + 1,
+          actualizado: Date.now(),
         };
-        set((s) => ({ materias: [...s.materias, materia] }));
+        escribir((s) => ({ materias: [...s.materias, materia] }));
         return materia;
       },
 
       updateMateria: (id, parcial) =>
-        set((s) => ({
+        escribir((s) => ({
           materias: s.materias.map((m) => (m.id === id ? { ...m, ...parcial } : m)),
         })),
 
+      // Igual que `cascada_borrado_materia()` en el servidor: la materia se
+      // marca y arrastra sus temas, que a su vez arrastran lo suyo.
       removeMateria: (id) =>
-        set((s) => {
-          const temasFuera = s.temas.filter((t) => t.materiaId === id);
-          const idsFuera = new Set(temasFuera.map((t) => t.id));
-          const progresos = { ...s.progresos };
-          for (const tid of idsFuera) delete progresos[tid];
+        escribir((s) => {
+          const ahora = Date.now();
+          const hijos = new Set(
+            s.temas
+              .filter((t) => t.materiaId === id && t.borrado == null)
+              .map((t) => t.id),
+          );
           return {
-            materias: s.materias.filter((m) => m.id !== id),
-            temas: s.temas.filter((t) => t.materiaId !== id),
-            progresos,
-            cantes: s.cantes.filter((c) => !idsFuera.has(c.temaId)),
-            keypoints: s.keypoints.filter((k) => !idsFuera.has(k.temaId)),
-            notas: s.notas.filter((n) => !idsFuera.has(n.temaId)),
-            vueltas: s.vueltas.filter((v) => !idsFuera.has(v.temaId)),
+            materias: marcarBorradas(s.materias, new Set([id]), ahora),
+            ...cascadaTemas(s, hijos, ahora),
           };
         }),
 
@@ -261,8 +349,9 @@ export const useStore = create<Store>()(
           titulo: titulo.trim(),
           epigrafes: [],
           propio: true,
+          actualizado: Date.now(),
         };
-        set((s) => ({
+        escribir((s) => ({
           temas: [...s.temas, tema],
           progresos: { ...s.progresos, [tema.id]: progresoVacio(tema.id) },
         }));
@@ -272,6 +361,7 @@ export const useStore = create<Store>()(
       addTemasMasivo: (materiaId, filas) => {
         const nuevos: Tema[] = [];
         const progresos: Record<string, ProgresoTema> = {};
+        const ahora = Date.now();
         for (const f of filas) {
           const titulo = f.titulo.trim();
           if (!titulo) continue;
@@ -282,11 +372,12 @@ export const useStore = create<Store>()(
             titulo,
             epigrafes: [],
             propio: true,
+            actualizado: ahora,
           };
           nuevos.push(tema);
           progresos[tema.id] = progresoVacio(tema.id);
         }
-        set((s) => ({
+        escribir((s) => ({
           temas: [...s.temas, ...nuevos],
           progresos: { ...s.progresos, ...progresos },
         }));
@@ -294,23 +385,12 @@ export const useStore = create<Store>()(
       },
 
       updateTema: (id, parcial) =>
-        set((s) => ({
+        escribir((s) => ({
           temas: s.temas.map((t) => (t.id === id ? { ...t, ...parcial } : t)),
         })),
 
       removeTema: (id) =>
-        set((s) => {
-          const progresos = { ...s.progresos };
-          delete progresos[id];
-          return {
-            temas: s.temas.filter((t) => t.id !== id),
-            progresos,
-            cantes: s.cantes.filter((c) => c.temaId !== id),
-            keypoints: s.keypoints.filter((k) => k.temaId !== id),
-            notas: s.notas.filter((n) => n.temaId !== id),
-            vueltas: s.vueltas.filter((v) => v.temaId !== id),
-          };
-        }),
+        escribir((s) => cascadaTemas(s, new Set([id]), Date.now())),
 
       // El array de epígrafes es una comodidad de la UI; en el servidor cada
       // epígrafe es una fila con su propio reloj. Por eso esto no sustituye
@@ -319,7 +399,7 @@ export const useStore = create<Store>()(
       // borró, que es lo único que la sincronización sabrá convertir en
       // altas, updates y tumbas.
       setEpigrafes: (temaId, epigrafes) =>
-        set((s) => {
+        escribir((s) => {
           const tema = s.temas.find((t) => t.id === temaId);
           if (!tema) return {};
           const ahora = Date.now();
@@ -328,39 +408,38 @@ export const useStore = create<Store>()(
           const siguientes: Epigrafe[] = epigrafes.map((e, i) => {
             const orden = i + 1;
             const previo = previos.get(e.id);
+            // `borrado: undefined` porque la lista que llega es "estos son
+            // los epígrafes vivos": si uno vuelve, deja de ser tumba. El
+            // reloj no se toca aquí; el sellado lo mueve solo si el
+            // contenido ha cambiado de verdad.
             if (!previo) {
-              return { ...e, orden, creado: e.creado ?? ahora, actualizado: ahora };
+              return {
+                ...e,
+                orden,
+                creado: e.creado ?? ahora,
+                actualizado: ahora,
+                borrado: undefined,
+              };
             }
-            const igual =
-              previo.titulo === e.titulo &&
-              previo.texto === e.texto &&
-              previo.orden === orden;
-            return {
-              ...previo,
-              ...e,
-              orden,
-              creado: previo.creado,
-              actualizado: igual ? previo.actualizado : ahora,
-            };
+            return { ...previo, ...e, orden, creado: previo.creado, borrado: undefined };
           });
 
-          const vivos = new Set(siguientes.map((e) => e.id));
-          const tumbas = tema.epigrafes
-            .filter((e) => !vivos.has(e.id))
-            .map((e) => ({ id: e.id, temaId, borrado: ahora }));
+          // Los que ya no vienen se marcan; las tumbas anteriores se quedan
+          // como están, con su fecha original.
+          const presentes = new Set(siguientes.map((e) => e.id));
+          const idas = tema.epigrafes
+            .filter((e) => !presentes.has(e.id))
+            .map((e) => (e.borrado == null ? { ...e, borrado: ahora } : e));
 
           return {
             temas: s.temas.map((t) =>
-              t.id === temaId ? { ...t, epigrafes: siguientes } : t,
+              t.id === temaId ? { ...t, epigrafes: [...siguientes, ...idas] } : t,
             ),
-            epigrafesBorrados: tumbas.length
-              ? [...s.epigrafesBorrados, ...tumbas]
-              : s.epigrafesBorrados,
           };
         }),
 
       addEpigrafe: (temaId, titulo, texto) =>
-        set((s) => {
+        escribir((s) => {
           const ahora = Date.now();
           return {
             temas: s.temas.map((t) =>
@@ -371,7 +450,9 @@ export const useStore = create<Store>()(
                       ...t.epigrafes,
                       {
                         id: uid(),
-                        orden: t.epigrafes.length + 1,
+                        // El orden lo dan los epígrafes vivos: las tumbas
+                        // no ocupan sitio en la lista que ve el opositor.
+                        orden: t.epigrafes.filter((e) => e.borrado == null).length + 1,
                         titulo: titulo.trim(),
                         texto,
                         creado: ahora,
@@ -385,15 +466,13 @@ export const useStore = create<Store>()(
         }),
 
       updateEpigrafe: (temaId, epigrafeId, parcial) =>
-        set((s) => ({
+        escribir((s) => ({
           temas: s.temas.map((t) =>
             t.id === temaId
               ? {
                   ...t,
                   epigrafes: t.epigrafes.map((e) =>
-                    e.id === epigrafeId
-                      ? { ...e, ...parcial, actualizado: Date.now() }
-                      : e,
+                    e.id === epigrafeId ? { ...e, ...parcial } : e,
                   ),
                 }
               : t,
@@ -403,27 +482,25 @@ export const useStore = create<Store>()(
       // Renumerar deja constancia: cada epígrafe que cambia de posición es
       // una fila más que tendrá que subir, no solo la que desaparece.
       removeEpigrafe: (temaId, epigrafeId) =>
-        set((s) => {
+        escribir((s) => {
           const ahora = Date.now();
           return {
-            temas: s.temas.map((t) =>
-              t.id === temaId
-                ? {
-                    ...t,
-                    epigrafes: t.epigrafes
-                      .filter((e) => e.id !== epigrafeId)
-                      .map((e, i) =>
-                        e.orden === i + 1
-                          ? e
-                          : { ...e, orden: i + 1, actualizado: ahora },
-                      ),
+            temas: s.temas.map((t) => {
+              if (t.id !== temaId) return t;
+              let orden = 0;
+              return {
+                ...t,
+                epigrafes: t.epigrafes.map((e) => {
+                  if (e.id === epigrafeId) {
+                    return e.borrado == null ? { ...e, borrado: ahora } : e;
                   }
-                : t,
-            ),
-            epigrafesBorrados: [
-              ...s.epigrafesBorrados,
-              { id: epigrafeId, temaId, borrado: ahora },
-            ],
+                  // Una tumba no ocupa posición ni se renumera.
+                  if (e.borrado != null) return e;
+                  orden += 1;
+                  return e.orden === orden ? e : { ...e, orden };
+                }),
+              };
+            }),
           };
         }),
 
@@ -433,7 +510,11 @@ export const useStore = create<Store>()(
       // de un tema debería recibir los contadores en caché.
       progresoDe: (temaId) => {
         const s = get();
-        const previo = s.progresos[temaId] ?? progresoVacio(temaId);
+        const guardado = s.progresos[temaId];
+        // Un progreso con tumba es como no tener progreso: el tema está
+        // borrado y nadie debería ver sus contadores.
+        const previo =
+          guardado && guardado.borrado == null ? guardado : progresoVacio(temaId);
         return {
           ...previo,
           segundos: segundosDeTema(temaId, s.sesiones),
@@ -443,7 +524,7 @@ export const useStore = create<Store>()(
       },
 
       setEstado: (temaId, estado) =>
-        set((s) => {
+        escribir((s) => {
           const previo = s.progresos[temaId] ?? progresoVacio(temaId);
           // Marcar un tema como dominado cierra vuelta. Se registra como
           // hecho, no como incremento: un contador no se puede reconstruir
@@ -457,13 +538,16 @@ export const useStore = create<Store>()(
           return {
             progresos: { ...s.progresos, [temaId]: siguiente },
             vueltas: cierra
-              ? [...s.vueltas, { id: uid(), temaId, fecha: Date.now() }]
+              ? [
+                  ...s.vueltas,
+                  { id: uid(), temaId, fecha: Date.now(), actualizado: Date.now() },
+                ]
               : s.vueltas,
           };
         }),
 
       setDificultad: (temaId, dificultad) =>
-        set((s) => {
+        escribir((s) => {
           const previo = s.progresos[temaId] ?? progresoVacio(temaId);
           return {
             progresos: {
@@ -474,7 +558,7 @@ export const useStore = create<Store>()(
         }),
 
       alternarFavorito: (temaId) =>
-        set((s) => {
+        escribir((s) => {
           const previo = s.progresos[temaId] ?? progresoVacio(temaId);
           return {
             progresos: {
@@ -485,14 +569,17 @@ export const useStore = create<Store>()(
         }),
 
       sumarVuelta: (temaId) =>
-        set((s) => {
+        escribir((s) => {
           const previo = s.progresos[temaId] ?? progresoVacio(temaId);
           return {
             progresos: {
               ...s.progresos,
               [temaId]: conSRS({ ...previo, vueltas: previo.vueltas + 1 }),
             },
-            vueltas: [...s.vueltas, { id: uid(), temaId, fecha: Date.now() }],
+            vueltas: [
+              ...s.vueltas,
+              { id: uid(), temaId, fecha: Date.now(), actualizado: Date.now() },
+            ],
           };
         }),
 
@@ -547,7 +634,7 @@ export const useStore = create<Store>()(
           nota,
         };
 
-        set((s) => {
+        escribir((s) => {
           const progresos = { ...s.progresos };
           if (c.temaId) {
             const previo = progresos[c.temaId] ?? progresoVacio(c.temaId);
@@ -573,12 +660,15 @@ export const useStore = create<Store>()(
           ...datos,
           id: uid(),
           fecha: datos.fecha ?? Date.now(),
+          actualizado: Date.now(),
         };
 
-        set((s) => {
+        escribir((s) => {
           const previo =
             s.progresos[cante.temaId] ?? progresoVacio(cante.temaId);
-          const notasPrevias = s.cantes
+          // La media es de los cantes vivos: uno borrado no debe seguir
+          // tirando de la nota del tema.
+          const notasPrevias = vivos(s.cantes)
             .filter((c) => c.temaId === cante.temaId && c.nota != null)
             .map((c) => c.nota as number);
           if (cante.nota != null) notasPrevias.push(cante.nota);
@@ -623,27 +713,29 @@ export const useStore = create<Store>()(
       },
 
       updateCante: (id, parcial) =>
-        set((s) => ({
+        escribir((s) => ({
           cantes: s.cantes.map((c) => (c.id === id ? { ...c, ...parcial } : c)),
         })),
 
       setAnalisisCante: (id, analisis) =>
-        set((s) => ({
+        escribir((s) => ({
           cantes: s.cantes.map((c) => (c.id === id ? { ...c, analisis } : c)),
         })),
 
       removeCante: (id) =>
-        set((s) => ({ cantes: s.cantes.filter((c) => c.id !== id) })),
+        escribir((s) => ({
+          cantes: marcarBorradas(s.cantes, new Set([id]), Date.now()),
+        })),
 
       cantesDe: (temaId) =>
-        get()
-          .cantes.filter((c) => c.temaId === temaId)
+        vivos(get().cantes)
+          .filter((c) => c.temaId === temaId)
           .sort((a, b) => b.fecha - a.fecha),
 
       /* ---------------- keypoints ---------------- */
 
       addKeyPoint: (temaId, anverso, reverso, epigrafeId) =>
-        set((s) => ({
+        escribir((s) => ({
           keypoints: [
             ...s.keypoints,
             {
@@ -653,6 +745,7 @@ export const useStore = create<Store>()(
               anverso: anverso.trim(),
               reverso: reverso.trim(),
               creado: Date.now(),
+              actualizado: Date.now(),
               aciertos: 0,
               fallos: 0,
               intervaloDias: 1,
@@ -662,7 +755,7 @@ export const useStore = create<Store>()(
         })),
 
       responderKeyPoint: (id, acierto) =>
-        set((s) => ({
+        escribir((s) => ({
           keypoints: s.keypoints.map((k) => {
             if (k.id !== id) return k;
             // SM-2 simplificado: acierto duplica y algo más, fallo vuelve al día 1.
@@ -680,12 +773,14 @@ export const useStore = create<Store>()(
         })),
 
       removeKeyPoint: (id) =>
-        set((s) => ({ keypoints: s.keypoints.filter((k) => k.id !== id) })),
+        escribir((s) => ({
+          keypoints: marcarBorradas(s.keypoints, new Set([id]), Date.now()),
+        })),
 
       /* ---------------- notas ---------------- */
 
       addNota: (temaId, texto, epigrafeId) =>
-        set((s) => ({
+        escribir((s) => ({
           notas: [
             ...s.notas,
             {
@@ -700,32 +795,34 @@ export const useStore = create<Store>()(
         })),
 
       updateNota: (id, texto) =>
-        set((s) => ({
-          notas: s.notas.map((n) =>
-            n.id === id ? { ...n, texto, actualizado: Date.now() } : n,
-          ),
+        escribir((s) => ({
+          notas: s.notas.map((n) => (n.id === id ? { ...n, texto } : n)),
         })),
 
       removeNota: (id) =>
-        set((s) => ({ notas: s.notas.filter((n) => n.id !== id) })),
+        escribir((s) => ({
+          notas: marcarBorradas(s.notas, new Set([id]), Date.now()),
+        })),
 
       /* ---------------- simulacros ---------------- */
 
       addSimulacro: (s0) => {
-        const simulacro: Simulacro = { ...s0, id: uid() };
-        set((s) => ({ simulacros: [...s.simulacros, simulacro] }));
+        const simulacro: Simulacro = { ...s0, id: uid(), actualizado: Date.now() };
+        escribir((s) => ({ simulacros: [...s.simulacros, simulacro] }));
         return simulacro;
       },
 
       updateSimulacro: (id, parcial) =>
-        set((s) => ({
+        escribir((s) => ({
           simulacros: s.simulacros.map((x) =>
             x.id === id ? { ...x, ...parcial } : x,
           ),
         })),
 
       removeSimulacro: (id) =>
-        set((s) => ({ simulacros: s.simulacros.filter((x) => x.id !== id) })),
+        escribir((s) => ({
+          simulacros: marcarBorradas(s.simulacros, new Set([id]), Date.now()),
+        })),
 
       /* ---------------- chat ---------------- */
 
@@ -739,22 +836,25 @@ export const useStore = create<Store>()(
 
       /* ---------------- datos ---------------- */
 
+      // La copia de seguridad es del expediente, no del estado interno:
+      // las tumbas se quedan fuera. Sirven para que un borrado viaje a otro
+      // dispositivo, y un fichero que el opositor se lleva no es eso.
       exportar: () => {
         const s = get();
         return JSON.stringify(
           {
-            version: 2,
+            version: 3,
             exportado: new Date().toISOString(),
             perfil: s.perfil,
-            materias: s.materias,
-            temas: s.temas,
-            progresos: s.progresos,
+            materias: vivos(s.materias),
+            temas: temasVivos(s.temas),
+            progresos: vivosMapa(s.progresos),
             sesiones: s.sesiones,
-            cantes: s.cantes,
-            keypoints: s.keypoints,
-            notas: s.notas,
-            simulacros: s.simulacros,
-            vueltas: s.vueltas,
+            cantes: vivos(s.cantes),
+            keypoints: vivos(s.keypoints),
+            notas: vivos(s.notas),
+            simulacros: vivos(s.simulacros),
+            vueltas: vivos(s.vueltas),
           },
           null,
           2,
@@ -775,7 +875,14 @@ export const useStore = create<Store>()(
           const anticuado =
             (bruto.version ?? 1) < 2 ||
             bruto.temas.some((t: { id?: string }) => !esUuid(t?.id));
-          const d = anticuado ? migrarAUuid(bruto as ExpedienteV1).estado : bruto;
+          // Y una copia anterior a la v3 no trae relojes. Pasa también por
+          // esa migración: sin `actualizado` la fila no se puede empujar y
+          // habría que inventarle uno al vuelo en cada push.
+          const d = migrarARelojes(
+            anticuado
+              ? migrarAUuid(bruto as ExpedienteV1).estado
+              : (bruto as ExpedienteV2),
+          );
           set({
             perfil: { ...PERFIL_INICIAL, ...(d.perfil ?? {}) },
             materias:
@@ -790,7 +897,6 @@ export const useStore = create<Store>()(
             notas: d.notas ?? [],
             simulacros: d.simulacros ?? [],
             vueltas: d.vueltas ?? [],
-            epigrafesBorrados: d.epigrafesBorrados ?? [],
           });
           return { ok: true };
         } catch (e) {
@@ -803,22 +909,27 @@ export const useStore = create<Store>()(
     }),
     {
       name: "opos-notaria",
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => idbStorage),
       // v1 → v2: ids a uuid, referencias reescritas, `Materia.orden`,
-      // timestamps de los epígrafes y registros de vuelta. Ver
-      // lib/store/migraciones.ts, donde está el porqué de cada paso.
+      // timestamps de los epígrafes y registros de vuelta.
+      // v2 → v3: `actualizado` en todas las entidades mutables y las tumbas
+      // de epígrafe plegadas dentro del tema. Ver lib/store/migraciones.ts,
+      // donde está el porqué de cada valor elegido.
       migrate: (guardado, version) => {
-        if (version >= 2) return guardado as Store;
-        const { estado, mapa } = migrarAUuid(guardado as ExpedienteV1);
-        // El mapa `idViejo → uuid` se guarda aparte y sin bloquear la
-        // migración: si algo sale mal, es lo único que permite reconstruir
-        // a mano un expediente reescrito.
-        void idbStorage.setItem(
-          "opos-notaria:mapa-uuid",
-          JSON.stringify({ fecha: Date.now(), mapa }),
-        );
-        return estado as unknown as Store;
+        let estado = guardado as ExpedienteV2;
+        if (version < 2) {
+          const migrado = migrarAUuid(guardado as ExpedienteV1);
+          estado = migrado.estado;
+          // El mapa `idViejo → uuid` se guarda aparte y sin bloquear la
+          // migración: si algo sale mal, es lo único que permite reconstruir
+          // a mano un expediente reescrito.
+          void idbStorage.setItem(
+            "opos-notaria:mapa-uuid",
+            JSON.stringify({ fecha: Date.now(), mapa: migrado.mapa }),
+          );
+        }
+        return migrarARelojes(estado) as unknown as Store;
       },
       partialize: (s) => {
         const { hidratado, ...resto } = s as Estado;
@@ -832,6 +943,28 @@ export const useStore = create<Store>()(
     },
   ),
 );
+
+/**
+ * TODA escritura de entidades sincronizables del store pasa por aquí.
+ *
+ * `sellar` compara el parcial con el estado anterior y avanza `actualizado`
+ * en las filas cuyo contenido ha cambiado. Es la única forma de que no se
+ * escape ninguna: hay más de treinta acciones, y ponerlo a mano en cada una
+ * es cuestión de tiempo que se olvide en alguna; esa modificación no
+ * viajaría nunca, porque el servidor la vería más vieja que la suya y la
+ * descartaría sin dar error.
+ *
+ * Regla: en el store no se llama a `set` a pelo salvo para lo que no es una
+ * entidad sincronizable (el cronómetro, el chat, el flag de hidratación) o
+ * para reemplazar el expediente entero (importar, borrar todo).
+ */
+function escribir(
+  mutador: Partial<Estado> | ((s: Estado) => Partial<Estado>),
+): void {
+  useStore.setState((s) =>
+    sellar(s, typeof mutador === "function" ? mutador(s) : mutador),
+  );
+}
 
 /** Selector con memoria estable para listas ordenadas de temas. */
 export function temasOrdenados(temas: Tema[], materias: Materia[]): Tema[] {
@@ -869,4 +1002,69 @@ export function useProgresos(): Record<string, ProgresoTema> {
 export function progresosDerivados(): Record<string, ProgresoTema> {
   const s = useStore.getState();
   return derivarProgresos(s.progresos, s.sesiones, s.cantes, s.vueltas);
+}
+
+/* ============================================================
+   Lecturas
+
+   Ninguna página lee las colecciones del store en crudo: ahí están las
+   tumbas del borrado lógico, y una sola lectura sin filtrar le pinta al
+   opositor un tema fantasma. Estos hooks son la puerta, y detrás está el
+   único filtro de verdad (lib/data/vivos.ts).
+
+   Los selectores son constantes de módulo y devuelven referencias
+   estables —`vivos()` memoriza por identidad del array— porque Zustand
+   compara por identidad: derivar un array nuevo dentro del selector es lo
+   que provocó el bucle infinito de renders (React #185) que está
+   documentado en app/cante/vivo/page.tsx.
+   ============================================================ */
+
+const selMaterias = (s: Store) => vivos(s.materias);
+const selTemas = (s: Store) => temasVivos(s.temas);
+const selCantes = (s: Store) => vivos(s.cantes);
+const selKeypoints = (s: Store) => vivos(s.keypoints);
+const selNotas = (s: Store) => vivos(s.notas);
+const selSimulacros = (s: Store) => vivos(s.simulacros);
+const selSesiones = (s: Store) => s.sesiones;
+
+export const useMaterias = () => useStore(selMaterias);
+/** Temas vivos, y dentro de cada uno solo sus epígrafes vivos. */
+export const useTemas = () => useStore(selTemas);
+export const useCantes = () => useStore(selCantes);
+export const useKeyPoints = () => useStore(selKeypoints);
+export const useNotas = () => useStore(selNotas);
+export const useSimulacros = () => useStore(selSimulacros);
+/**
+ * Las sesiones no tienen tumba y no se cascadean: las horas que el opositor
+ * le echó a un tema son suyas aunque luego borre el tema del programa.
+ * Existe como hook solo para que nadie tenga que pensar si esta colección
+ * era de las que se filtran.
+ */
+export const useSesiones = () => useStore(selSesiones);
+
+/** El tema vivo con ese id, o undefined si no está o está borrado. */
+export function useTema(id: string | undefined): Tema | undefined {
+  return useStore(
+    React.useCallback(
+      (s: Store) => (id ? temasVivos(s.temas).find((t) => t.id === id) : undefined),
+      [id],
+    ),
+  );
+}
+
+/** Las mismas lecturas fuera de React (contexto de IA, acciones sueltas). */
+export function estadoVivo() {
+  const s = useStore.getState();
+  return {
+    perfil: s.perfil,
+    materias: vivos(s.materias),
+    temas: temasVivos(s.temas),
+    progresos: vivosMapa(s.progresos),
+    sesiones: s.sesiones,
+    cantes: vivos(s.cantes),
+    keypoints: vivos(s.keypoints),
+    notas: vivos(s.notas),
+    simulacros: vivos(s.simulacros),
+    vueltas: vivos(s.vueltas),
+  };
 }

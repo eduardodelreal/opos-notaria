@@ -11,7 +11,14 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { useProgresos, useStore } from "@/lib/store/store";
+import {
+  useCantes,
+  useMaterias,
+  useProgresos,
+  useSimulacros,
+  useStore,
+  useTemas,
+} from "@/lib/store/store";
 import { materiasOrdenadas } from "@/lib/data/materias";
 import { Cabecera } from "@/components/Shell";
 import {
@@ -34,7 +41,7 @@ import type { Simulacro, Tema } from "@/lib/data/types";
 
 export default function Simulacros() {
   const [pestana, setPestana] = React.useState<"cante" | "dictamen">("cante");
-  const simulacros = useStore((s) => s.simulacros);
+  const simulacros = useSimulacros();
 
   return (
     <>
@@ -73,7 +80,9 @@ export default function Simulacros() {
 /* ========================================================================== */
 
 function Bombo() {
-  const { temas, materias: materiasSinOrdenar, cantes } = useStore();
+  const temas = useTemas();
+  const materiasSinOrdenar = useMaterias();
+  const cantes = useCantes();
   const progresos = useProgresos();
   const materias = React.useMemo(
     () => materiasOrdenadas(materiasSinOrdenar),
@@ -396,7 +405,7 @@ function Bombo() {
 function Dictamen() {
   const ia = useIA();
   const perfil = useStore((s) => s.perfil);
-  const temas = useStore((s) => s.temas);
+  const temas = useTemas();
   const addSimulacro = useStore((s) => s.addSimulacro);
 
   const [supuesto, setSupuesto] = React.useState("");
@@ -584,12 +593,12 @@ function Dictamen() {
 /* ========================================================================== */
 
 function Historial({ tipo }: { tipo: "cante" | "dictamen" }) {
-  const todos = useStore((s) => s.simulacros);
+  const todos = useSimulacros();
   const simulacros = React.useMemo(
     () => todos.filter((x) => x.tipo === tipo).sort((a, b) => b.fecha - a.fecha),
     [todos, tipo],
   );
-  const temas = useStore((s) => s.temas);
+  const temas = useTemas();
   const remove = useStore((s) => s.removeSimulacro);
 
   if (!simulacros.length) return null;

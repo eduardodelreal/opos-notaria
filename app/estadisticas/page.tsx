@@ -3,7 +3,14 @@
 import * as React from "react";
 import Link from "next/link";
 import { BarChart3, TriangleAlert } from "lucide-react";
-import { useProgresos, useStore } from "@/lib/store/store";
+import {
+  useCantes,
+  useMaterias,
+  useProgresos,
+  useSesiones,
+  useStore,
+  useTemas,
+} from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
   Badge,
@@ -28,7 +35,11 @@ import { ESTADOS } from "@/lib/data/types";
 import { fecha, horas, horasMin, inicioSemana } from "@/lib/utils/time";
 
 export default function Estadisticas() {
-  const { temas, materias, sesiones, cantes, perfil } = useStore();
+  const perfil = useStore((s) => s.perfil);
+  const temas = useTemas();
+  const materias = useMaterias();
+  const sesiones = useSesiones();
+  const cantes = useCantes();
   const progresos = useProgresos();
 
   const resumen = React.useMemo(

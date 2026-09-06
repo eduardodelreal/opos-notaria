@@ -20,7 +20,7 @@ import {
   Dices,
   X,
 } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useStore, useTemas } from "@/lib/store/store";
 import { cx } from "./ui";
 import { CronoFlotante } from "./CronoFlotante";
 import { nombreVisible, useSesion } from "./Sesion";
@@ -44,7 +44,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [abierto, setAbierto] = React.useState(false);
   const alternarTema = useStore((s) => s.alternarTema);
   const tema = useStore((s) => s.perfil.tema);
-  const temas = useStore((s) => s.temas);
+  const temas = useTemas();
   const nombre = useStore((s) => s.perfil.nombre);
 
   React.useEffect(() => setAbierto(false), [ruta]);

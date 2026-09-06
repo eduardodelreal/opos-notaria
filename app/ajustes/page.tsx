@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Download, Moon, Sun, Trash2, Upload } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useCantes, useKeyPoints, useSesiones, useStore, useTemas } from "@/lib/store/store";
 import { Cabecera } from "@/components/Shell";
 import {
   Boton,
@@ -16,7 +16,11 @@ import {
 import type { Perfil } from "@/lib/data/types";
 
 export default function Ajustes() {
-  const { perfil, temas, cantes, sesiones, keypoints } = useStore();
+  const perfil = useStore((s) => s.perfil);
+  const sesiones = useSesiones();
+  const temas = useTemas();
+  const cantes = useCantes();
+  const keypoints = useKeyPoints();
   const setPerfil = useStore((s) => s.setPerfil);
   const exportar = useStore((s) => s.exportar);
   const importar = useStore((s) => s.importar);

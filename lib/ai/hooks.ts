@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { progresosDerivados, useStore } from "../store/store";
+import { estadoVivo, progresosDerivados } from "../store/store";
 import { construirFicha } from "./contexto";
 
 /**
@@ -52,7 +52,10 @@ export function useIA() {
  */
 export function useFicha() {
   return React.useCallback(() => {
-    const s = useStore.getState();
+    // `estadoVivo()` en vez del estado crudo: al modelo no se le cuentan
+    // temas ni cantes borrados, o el diagnóstico hablaría de un temario que
+    // el opositor ya no tiene.
+    const s = estadoVivo();
     return construirFicha({
       perfil: s.perfil,
       materias: s.materias,

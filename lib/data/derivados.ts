@@ -1,4 +1,5 @@
 import type { Cante, ProgresoTema, Sesion, Vuelta } from "./types";
+import { vivos, vivosMapa } from "./vivos";
 
 /* ============================================================
    Contadores derivados
@@ -16,6 +17,12 @@ import type { Cante, ProgresoTema, Sesion, Vuelta } from "./types";
    Las columnas del progreso se quedan como caché (evitan agregar en cada
    render y viajan a Supabase para que el servidor no tenga que agregar),
    pero lo que se pinta en pantalla sale siempre de aquí.
+
+   Todo lo que entra aquí pasa por `vivos()`: una fila borrada no cuenta
+   para los contadores, o el opositor vería horas y notas de temas que ya
+   no existen. La excepción es `sesiones`, que no tiene tumbas ni cascada:
+   el tiempo que se estudió se estudió. El filtro se hace dentro y no en el
+   que llama, para que no dependa de que cada página se acuerde.
    ============================================================ */
 
 /** Segundos efectivos por tema, sumados de las sesiones. */
@@ -31,7 +38,7 @@ export function segundosPorTema(sesiones: Sesion[]): Map<string, number> {
 /** Media de las notas de cante por tema. Los cantes sin nota no cuentan. */
 export function notaMediaPorTema(cantes: Cante[]): Map<string, number> {
   const suma = new Map<string, { total: number; n: number }>();
-  for (const c of cantes) {
+  for (const c of vivos(cantes)) {
     if (c.nota == null) continue;
     const acc = suma.get(c.temaId) ?? { total: 0, n: 0 };
     acc.total += c.nota;
@@ -48,7 +55,7 @@ export function notaMediaPorTema(cantes: Cante[]): Map<string, number> {
 /** Vueltas cerradas por tema: una por cada transición registrada a dominado. */
 export function vueltasPorTema(vueltas: Vuelta[]): Map<string, number> {
   const mapa = new Map<string, number>();
-  for (const v of vueltas) {
+  for (const v of vivos(vueltas)) {
     mapa.set(v.temaId, (mapa.get(v.temaId) ?? 0) + 1);
   }
   return mapa;
@@ -64,7 +71,7 @@ export function notaMediaDeTema(
   temaId: string,
   cantes: Cante[],
 ): number | undefined {
-  const notas = cantes
+  const notas = vivos(cantes)
     .filter((c) => c.temaId === temaId && c.nota != null)
     .map((c) => c.nota as number);
   if (!notas.length) return undefined;
@@ -72,7 +79,7 @@ export function notaMediaDeTema(
 }
 
 export function vueltasDeTema(temaId: string, vueltas: Vuelta[]): number {
-  return vueltas.reduce((n, v) => n + (v.temaId === temaId ? 1 : 0), 0);
+  return vivos(vueltas).reduce((n, v) => n + (v.temaId === temaId ? 1 : 0), 0);
 }
 
 /**
@@ -93,7 +100,7 @@ export function derivarProgresos(
   const cuenta = vueltasPorTema(vueltas);
 
   const salida: Record<string, ProgresoTema> = {};
-  for (const [temaId, p] of Object.entries(progresos)) {
+  for (const [temaId, p] of Object.entries(vivosMapa(progresos))) {
     salida[temaId] = {
       ...p,
       segundos: segundos.get(temaId) ?? 0,

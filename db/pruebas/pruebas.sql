@@ -120,17 +120,25 @@ begin
     values (pruebas.id(p_pref, 7), p_uid, pruebas.id(p_pref, 2), 'nota libre');
   insert into public.simulacros (id, usuario_id, tipo, tema_ids, minutos)
     values (pruebas.id(p_pref, 8), p_uid, 'cante', array[pruebas.id(p_pref, 2)], 30);
+  insert into public.vueltas (id, usuario_id, tema_id, fecha)
+    values (pruebas.id(p_pref, 9), p_uid, pruebas.id(p_pref, 2), now());
+  -- El endpoint lleva el prefijo del usuario: es único por navegador, así que
+  -- dos usuarios de prueba no pueden compartirlo.
+  insert into public.suscripciones_aviso (id, usuario_id, endpoint, clave_p256dh, clave_auth, user_agent)
+    values (pruebas.id(p_pref, 10), p_uid, 'https://push.ejemplo.es/' || p_pref,
+            'p256dh-' || p_pref, 'auth-' || p_pref, 'Firefox en Linux');
 end;
 $$;
 
--- Las nueve tablas con usuario_id (perfiles va aparte: su RLS es contra la PK).
+-- Las once tablas con usuario_id (perfiles va aparte: su RLS es contra la PK).
 create function pruebas.tablas()
 returns text[]
 language sql
 immutable
 as $$
   select array['materias','temas','epigrafes','progreso_temas',
-               'sesiones','cantes','keypoints','notas','simulacros'];
+               'sesiones','cantes','keypoints','notas','simulacros',
+               'vueltas','suscripciones_aviso'];
 $$;
 
 -- Los tests corren con el rol `authenticated`, que necesita poder llamar a
@@ -213,7 +221,7 @@ begin
     execute format('select count(*) from public.%I', t) into total;
     if total <> 1 then fallos := fallos || t || '(ve ' || total || ' filas, esperaba 1) '; end if;
   end loop;
-  perform pruebas.comprobar('rls', 'select: A no ve ninguna fila de B en las 9 tablas',
+  perform pruebas.comprobar('rls', 'select: A no ve ninguna fila de B en las 11 tablas',
     fallos = '', coalesce(nullif(fallos, ''), 'todas aisladas'));
 
   -- perfiles: su RLS va contra la PK.
@@ -285,7 +293,7 @@ begin
   if n <> 0 then fallos := fallos || 'perfiles(' || n || ') '; end if;
 
   perform pruebas.comprobar('delete', 'un delete sin where afecta a 0 filas y no da error',
-    fallos = '', coalesce(nullif(fallos, ''), 'las 10 tablas rechazan el delete'));
+    fallos = '', coalesce(nullif(fallos, ''), 'las 12 tablas rechazan el delete'));
 
   select count(*) into despues from public.materias;
   perform pruebas.comprobar('delete', 'nada ha desaparecido tras los delete',
@@ -600,7 +608,299 @@ $$;
 commit;
 
 -- ============================================================================
--- 8 · Índices del pull incremental
+-- 8 · vueltas y avisos (0003)
+-- ============================================================================
+
+-- --------------------------------------------------------------- vueltas ----
+-- B siembra unas cuantas vueltas propias para que el aislamiento se pruebe
+-- contra filas que existen de verdad, no contra una tabla vacía.
+begin;
+do $$ begin perform pruebas.como('22222222-2222-4222-8222-222222222222'); end $$;
+do $$
+declare
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  mat uuid := pruebas.id('bbbb2222', 401);
+  tema uuid := pruebas.id('bbbb2222', 402);
+begin
+  insert into public.materias (id, usuario_id, nombre) values (mat, b, 'Fiscal');
+  insert into public.temas (id, usuario_id, materia_id, numero, titulo) values (tema, b, mat, 9, 'T9');
+  insert into public.vueltas (id, usuario_id, tema_id, fecha)
+  select pruebas.id('bbbb2222', 402 + g), b, tema, now() - (g || ' days')::interval
+    from generate_series(1, 4) g;
+end;
+$$;
+commit;
+
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  mat uuid := pruebas.id('aaaa1111', 401);
+  tema uuid := pruebas.id('aaaa1111', 402);
+  otro uuid := pruebas.id('aaaa1111', 406);
+  v1 uuid := pruebas.id('aaaa1111', 403);
+  n int;
+  t0 timestamptz;
+  t1 timestamptz;
+begin
+  insert into public.materias (id, usuario_id, nombre) values (mat, a, 'Hipotecario');
+  insert into public.temas (id, usuario_id, materia_id, numero, titulo) values
+    (tema, a, mat, 4, 'T4'),
+    (otro, a, mat, 5, 'T5');
+  insert into public.vueltas (id, usuario_id, tema_id, fecha) values
+    (v1,                          a, tema, now() - interval '30 days'),
+    (pruebas.id('aaaa1111', 404), a, tema, now() - interval '15 days'),
+    (pruebas.id('aaaa1111', 405), a, tema, now() - interval '2 days'),
+    -- Una vuelta de otro tema, para poder comprobar que la cascada no se lleva
+    -- por delante lo que no es suyo.
+    (pruebas.id('aaaa1111', 407), a, otro, now() - interval '3 days');
+
+  -- La razón de ser de la tabla: el contador se recompone contando filas.
+  select count(*) into n from public.vueltas where tema_id = tema and deleted_at is null;
+  perform pruebas.comprobar('vueltas', 'el recuento de un tema sale de contar filas (no del contador en caché)',
+    n = 3, 'vueltas contadas: ' || n);
+
+  -- RLS entre dos usuarios.
+  select count(*) into n from public.vueltas where usuario_id = b;
+  perform pruebas.comprobar('vueltas', 'rls: A no ve ninguna vuelta de B',
+    n = 0, 'vueltas de B visibles: ' || n);
+
+  select count(*) into n from public.vueltas;
+  perform pruebas.comprobar('vueltas', 'rls: A solo ve las suyas (4 nuevas + la de la siembra)',
+    n = 5, 'vueltas visibles: ' || n);
+
+  perform pruebas.comprobar('vueltas', 'rls: A no puede insertar una vuelta a nombre de B',
+    pruebas.rechazado(format(
+      'insert into public.vueltas (usuario_id, tema_id, fecha) values (%L, %L, now())',
+      b, tema)),
+    'esperado SQLSTATE 42501');
+
+  perform pruebas.comprobar('vueltas', 'rls: A no puede regalarle una vuelta suya a B',
+    pruebas.rechazado(format(
+      'update public.vueltas set usuario_id = %L where id = %L', b, v1)),
+    'esperado SQLSTATE 42501');
+
+  update public.vueltas set fecha = now() where usuario_id = b;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('vueltas', 'rls: A no puede modificar las vueltas de B',
+    n = 0, 'filas ajenas tocadas: ' || n);
+
+  -- DELETE imposible: sin política, un delete sin where afecta a 0 filas.
+  delete from public.vueltas;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('vueltas', 'un delete sin where afecta a 0 filas',
+    n = 0, 'filas borradas: ' || n);
+  select count(*) into n from public.vueltas;
+  perform pruebas.comprobar('vueltas', 'nada ha desaparecido tras el delete',
+    n = 5, 'vueltas visibles: ' || n);
+
+  -- El trigger de updated_at es el de 0001, con su avance monótono.
+  select updated_at into t0 from public.vueltas where id = v1;
+  update public.vueltas set fecha = now() where id = v1;
+  select updated_at into t1 from public.vueltas where id = v1;
+  perform pruebas.comprobar('vueltas', 'un update avanza updated_at (trigger reutilizado de 0001)',
+    t1 > t0, t0 || ' -> ' || t1);
+
+  update public.vueltas set fecha = now(), updated_at = t1 - interval '1 day' where id = v1;
+  select updated_at into t0 from public.vueltas where id = v1;
+  perform pruebas.comprobar('vueltas', 'una escritura con updated_at más antiguo NO gana',
+    t0 = t1, 'updated_at = ' || t0);
+end;
+$$;
+commit;
+
+-- Cascada: borrar el tema tiene que enterrar sus vueltas y hacerlas bajar.
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  tema uuid := pruebas.id('aaaa1111', 402);
+  antes timestamptz;
+  n int;
+begin
+  select min(updated_at) into antes from public.vueltas where tema_id = tema;
+
+  update public.temas set deleted_at = now(), updated_at = now() where id = tema;
+
+  select count(*) into n from public.vueltas where tema_id = tema and deleted_at is null;
+  perform pruebas.comprobar('cascada', 'borrar un tema arrastra también sus vueltas',
+    n = 0, 'vueltas del tema sin enterrar: ' || n);
+
+  select count(*) into n from public.vueltas where tema_id = tema and updated_at > antes;
+  perform pruebas.comprobar('cascada', 'las tumbas de las vueltas bajan en el pull incremental',
+    n = 3, 'vueltas devueltas por el pull: ' || n);
+
+  -- Y el recuento derivado del tema borrado se queda a cero: una vuelta viva
+  -- de un tema que ya no existe inflaría la cuenta.
+  select count(*) into n from public.vueltas where tema_id = tema and deleted_at is null;
+  perform pruebas.comprobar('cascada', 'el recuento derivado de un tema borrado queda a cero',
+    n = 0, 'vueltas vivas: ' || n);
+
+  -- Las vueltas de OTROS temas no se tocan.
+  select count(*) into n from public.vueltas
+   where usuario_id = a and tema_id <> tema and deleted_at is null;
+  perform pruebas.comprobar('cascada', 'la cascada de un tema no toca las vueltas de otros temas',
+    n = 1, 'vueltas vivas de otros temas: ' || n);
+end;
+$$;
+commit;
+
+-- ---------------------------------------------------------------- avisos ----
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  movil uuid := pruebas.id('aaaa1111', 501);
+  portatil uuid := pruebas.id('aaaa1111', 502);
+  n int;
+  clave text;
+  borrada timestamptz;
+begin
+  -- Varios dispositivos por usuario: es la razón de que sea tabla y no columnas
+  -- de perfiles.
+  insert into public.suscripciones_aviso (id, usuario_id, endpoint, clave_p256dh, clave_auth, user_agent, zona_horaria)
+  values (movil,    a, 'https://fcm.ejemplo.es/movil',    'k1', 'a1', 'Chrome en Android', 'Atlantic/Canary'),
+         (portatil, a, 'https://fcm.ejemplo.es/portatil', 'k2', 'a2', 'Firefox en Linux',  'Europe/Madrid');
+
+  select count(*) into n from public.suscripciones_aviso
+   where usuario_id = a and deleted_at is null and caducada_at is null;
+  perform pruebas.comprobar('avisos', 'un mismo usuario puede tener varios dispositivos suscritos',
+    n = 3, 'suscripciones vivas: ' || n);
+
+  -- Aislamiento.
+  select count(*) into n from public.suscripciones_aviso where usuario_id = b;
+  perform pruebas.comprobar('avisos', 'rls: A no ve las suscripciones de B (ni sus claves)',
+    n = 0, 'suscripciones de B visibles: ' || n);
+
+  perform pruebas.comprobar('avisos', 'rls: A no puede registrar un dispositivo a nombre de B',
+    pruebas.rechazado(format(
+      'insert into public.suscripciones_aviso (usuario_id, endpoint, clave_p256dh, clave_auth)
+         values (%L, %L, %L, %L)', b, 'https://fcm.ejemplo.es/robado', 'k', 'a')),
+    'esperado SQLSTATE 42501');
+
+  -- El endpoint es único por usuario: resuscribirse no duplica la fila.
+  perform pruebas.comprobar('avisos', 'el mismo endpoint no se puede duplicar',
+    pruebas.rechazado(
+      format('insert into public.suscripciones_aviso (id, usuario_id, endpoint, clave_p256dh, clave_auth)
+                values (%L, %L, %L, %L, %L)',
+             gen_random_uuid(), a, 'https://fcm.ejemplo.es/movil', 'kx', 'ax'),
+      '23505'),
+    'esperado SQLSTATE 23505 (unique)');
+
+  -- ...y el upsert por (usuario_id, endpoint) refresca las claves en su sitio.
+  -- Va en un sub-bloque con handler para que la falta del índice único (que es
+  -- lo que hace posible el ON CONFLICT) salga como comprobación en rojo y no
+  -- como un error que se lleve por delante el resto del bloque.
+  begin
+    insert into public.suscripciones_aviso (id, usuario_id, endpoint, clave_p256dh, clave_auth)
+    values (gen_random_uuid(), a, 'https://fcm.ejemplo.es/movil', 'k1-nueva', 'a1-nueva')
+    on conflict (usuario_id, endpoint)
+      do update set clave_p256dh = excluded.clave_p256dh, clave_auth = excluded.clave_auth;
+  exception when others then
+    perform pruebas.comprobar('avisos', 'el upsert por (usuario_id, endpoint) es posible',
+      false, sqlstate || ' ' || sqlerrm);
+  end;
+
+  select clave_p256dh into clave from public.suscripciones_aviso where id = movil;
+  select count(*) into n from public.suscripciones_aviso where usuario_id = a;
+  perform pruebas.comprobar('avisos', 'resuscribirse refresca las claves sin crear un dispositivo nuevo',
+    clave = 'k1-nueva' and n = 3, 'clave=' || clave || ' filas=' || n);
+
+  -- Endpoint muerto: se marca, no se borra.
+  update public.suscripciones_aviso set caducada_at = now() where id = movil;
+  select count(*) into n from public.suscripciones_aviso where id = movil;
+  select deleted_at into borrada from public.suscripciones_aviso where id = movil;
+  perform pruebas.comprobar('avisos', 'un endpoint caducado se marca y la fila sigue existiendo',
+    n = 1 and borrada is null, 'filas=' || n || ' deleted_at=' || coalesce(borrada::text, 'null'));
+
+  select count(*) into n from public.suscripciones_aviso
+   where usuario_id = a and deleted_at is null and caducada_at is null;
+  perform pruebas.comprobar('avisos', 'la consulta de envío ignora las caducadas',
+    n = 2, 'suscripciones a las que enviar: ' || n);
+
+  -- Y la baja del usuario es otra cosa distinta de la caducidad.
+  update public.suscripciones_aviso set deleted_at = now() where id = portatil;
+  select count(*) into n from public.suscripciones_aviso
+   where usuario_id = a and deleted_at is null and caducada_at is null;
+  perform pruebas.comprobar('avisos', 'dar de baja un dispositivo lo saca del envío sin borrar la fila',
+    n = 1, 'suscripciones a las que enviar: ' || n);
+
+  delete from public.suscripciones_aviso;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('avisos', 'un delete sin where sobre las suscripciones afecta a 0 filas',
+    n = 0, 'filas borradas: ' || n);
+end;
+$$;
+commit;
+
+-- Preferencias de aviso: viven en perfiles, con su RLS contra la PK.
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  activos boolean;
+  hora time;
+  dias int[];
+  tipos text[];
+  n int;
+begin
+  select avisos_activos, aviso_hora, aviso_dias, aviso_tipos
+    into activos, hora, dias, tipos
+    from public.perfiles where id = a;
+  perform pruebas.comprobar('avisos', 'las preferencias nacen apagadas (el push exige permiso explícito)',
+    activos = false, 'avisos_activos = ' || activos);
+  perform pruebas.comprobar('avisos', 'los valores por defecto de las preferencias son utilizables',
+    hora = '20:00'::time and dias = array[1,2,3,4,5,6,7] and tipos @> array['oxido'],
+    'hora=' || hora || ' dias=' || dias::text || ' tipos=' || tipos::text);
+
+  update public.perfiles
+     set avisos_activos = true, aviso_hora = '07:30', aviso_dias = array[1,2,3,4,5]
+   where id = a;
+  select aviso_hora into hora from public.perfiles where id = a;
+  perform pruebas.comprobar('avisos', 'el opositor puede cambiar sus preferencias',
+    hora = '07:30'::time, 'aviso_hora = ' || hora);
+
+  perform pruebas.comprobar('avisos', 'no se aceptan días fuera de 1..7',
+    pruebas.rechazado('update public.perfiles set aviso_dias = array[0,9]', '23514'),
+    'esperado SQLSTATE 23514 (check)');
+  perform pruebas.comprobar('avisos', 'no se aceptan tipos de aviso inventados',
+    pruebas.rechazado('update public.perfiles set aviso_tipos = array[''spam'']', '23514'),
+    'esperado SQLSTATE 23514 (check)');
+
+  update public.perfiles set avisos_activos = true where id = b;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('avisos', 'rls: A no puede tocar las preferencias de aviso de B',
+    n = 0, 'perfiles ajenos tocados: ' || n);
+end;
+$$;
+commit;
+
+-- Ninguna de las tablas nuevas puede tener política de DELETE.
+do $$
+declare n int;
+begin
+  perform pruebas.servidor();
+  select count(*) into n from pg_policies
+   where schemaname = 'public' and cmd = 'DELETE';
+  perform pruebas.comprobar('delete', 'ninguna tabla de public tiene política de DELETE (tampoco las de 0003)',
+    n = 0, 'políticas de DELETE: ' || n);
+
+  select count(*) into n from pg_tables
+   where schemaname = 'public' and not rowsecurity;
+  perform pruebas.comprobar('rls', 'todas las tablas de public tienen RLS activada',
+    n = 0, 'tablas sin RLS: ' || n);
+end;
+$$;
+
+-- ============================================================================
+-- 9 · Índices del pull incremental
 --
 -- No basta con que el índice exista: hay que ver que el planificador lo elige.
 -- Para eso hace falta volumen, si no un seq scan siempre gana.
@@ -650,6 +950,42 @@ begin
   insert into public.simulacros (id, usuario_id, tipo, updated_at)
   select gen_random_uuid(), t.usuario_id, 'cante', t.updated_at
     from public.temas t where t.titulo = 't';
+
+  insert into public.vueltas (id, usuario_id, tema_id, fecha, updated_at)
+  select gen_random_uuid(), t.usuario_id, t.id, t.updated_at, t.updated_at
+    from public.temas t where t.titulo = 't';
+
+  -- Varios dispositivos por usuario de relleno: el endpoint tiene que ser
+  -- único dentro de cada uno, de ahí el número en la URL.
+  insert into public.suscripciones_aviso (id, usuario_id, endpoint, clave_p256dh, clave_auth, updated_at)
+  select gen_random_uuid(), u.id, 'https://fcm.ejemplo.es/' || u.id || '/' || g, 'k', 'a',
+         now() - (g || ' days')::interval
+    from auth.users u, generate_series(1, 50) g
+   where u.email like 'relleno%';
+end;
+$$;
+
+-- Volumen aparte SOLO para perfiles: el índice del programador de avisos se
+-- consulta sobre todos los perfiles a la vez, y con doscientas filas el
+-- planificador elige un seq scan por bueno que sea el índice. Estos usuarios
+-- llevan otro prefijo de email para no entrar en el relleno de arriba: solo
+-- interesan sus perfiles, que crea el trigger al_crear_usuario.
+do $$
+begin
+  perform pruebas.servidor();
+
+  insert into auth.users (id, email)
+  select gen_random_uuid(), 'soloperfil' || g || '@ejemplo.es' from generate_series(1, 4000) g;
+
+  -- Uno de cada veinte quiere avisos, repartidos por las 24 horas: así el
+  -- índice parcial es pequeño y la consulta del programador, muy selectiva.
+  update public.perfiles p
+     set avisos_activos = true,
+         aviso_hora = (((abs(hashtext(p.id::text)) % 24) || ':00'))::time
+    from auth.users u
+   where u.id = p.id
+     and u.email like 'soloperfil%'
+     and abs(hashtext(p.id::text)) % 20 = 0;
 end;
 $$;
 
@@ -683,11 +1019,33 @@ begin
   end loop;
 
   perform pruebas.comprobar('indices',
-    'el pull incremental (usuario_id + updated_at) usa el índice *_pull_idx en las 9 tablas',
-    fallos = '', coalesce(nullif(fallos, ''), 'las 9 usan su índice de pull'));
+    'el pull incremental (usuario_id + updated_at) usa el índice *_pull_idx en las 11 tablas',
+    fallos = '', coalesce(nullif(fallos, ''), 'las 11 usan su índice de pull'));
 end;
 $$;
 commit;
+
+-- El índice del programador de avisos: "a quién le toca aviso a esta hora".
+-- Corre con la service_role sobre todos los perfiles, así que no lleva
+-- usuario_id delante y es el único caso así del esquema.
+do $$
+declare
+  r record;
+  plan text := '';
+begin
+  perform pruebas.servidor();
+  for r in
+    explain (costs off)
+    select id from public.perfiles
+     where avisos_activos and deleted_at is null and aviso_hora = '08:00'::time
+  loop
+    plan := plan || r."QUERY PLAN" || E'\n';
+  end loop;
+
+  perform pruebas.comprobar('indices', 'la consulta del programador de avisos usa perfiles_aviso_hora_idx',
+    position('perfiles_aviso_hora_idx' in plan) > 0, replace(trim(plan), E'\n', ' | '));
+end;
+$$;
 
 -- Y el índice de pull NO puede ser parcial: tiene que devolver también tumbas.
 do $$
@@ -703,13 +1061,13 @@ begin
     n = 0, 'índices de pull con WHERE: ' || n);
 
   select count(*) into n from pg_indexes where schemaname = 'public' and indexname like '%\_pull\_idx';
-  perform pruebas.comprobar('indices', 'existen los 9 índices de pull',
-    n = 9, 'encontrados: ' || n);
+  perform pruebas.comprobar('indices', 'existen los 11 índices de pull',
+    n = 11, 'encontrados: ' || n);
 end;
 $$;
 
 -- ============================================================================
--- 9 · Resumen
+-- 10 · Resumen
 -- ============================================================================
 
 \echo ''

@@ -12,7 +12,13 @@
  *   · `creado` y `actualizado` son los equivalentes locales de las columnas
  *     `creado_at` y `updated_at` del esquema. `actualizado` es el reloj del
  *     last-write-wins: se toca en cada edición y no se duplica con ningún
- *     otro campo que diga lo mismo.
+ *     otro campo que diga lo mismo. Lo pone el sellado automático del store
+ *     (lib/store/sellado.ts), no cada acción a mano.
+ *   · `borrado` es el equivalente local de `deleted_at`: una fila con
+ *     `borrado` es una tumba, no un dato. Nada de la app la lee (todas las
+ *     lecturas pasan por lib/data/vivos.ts) pero sigue en IndexedDB porque
+ *     es lo único que puede viajar: un borrado físico no deja rastro que
+ *     bajar al otro dispositivo, y la fila resucitaría en el siguiente pull.
  *   · Lo que se puede derivar de una colección append-only NO es un dato,
  *     es caché. Ver lib/data/derivados.ts.
  */
@@ -92,6 +98,10 @@ export interface Materia {
    * de las materias bailaría entre dispositivos.
    */
   orden: number;
+  /** Reloj del last-write-wins (`updated_at`). */
+  actualizado: number;
+  /** Tumba (`deleted_at`). Cascada: arrastra los temas de la materia. */
+  borrado?: number;
 }
 
 export interface Epigrafe {
@@ -103,18 +113,12 @@ export interface Epigrafe {
   creado: number;
   /** Reloj del last-write-wins (`updated_at`). Lo toca cualquier edición. */
   actualizado: number;
-}
-
-/**
- * Epígrafe borrado en local. Es una tumba, no un dato: los epígrafes son
- * filas propias en el servidor, así que borrar uno tiene que poder viajar.
- * Si solo lo quitáramos del array, el otro dispositivo no se enteraría nunca
- * (no hay fila que bajar) y lo resucitaría en el siguiente pull.
- */
-export interface EpigrafeBorrado {
-  id: string;
-  temaId: string;
-  borrado: number;
+  /**
+   * Tumba (`deleted_at`). El epígrafe borrado se queda en el array del tema
+   * en vez de desaparecer: en el servidor es una fila propia y la tumba
+   * tiene que llevar su `id` y su `actualizado` para poder empujarse.
+   */
+  borrado?: number;
 }
 
 export interface Tema {
@@ -125,6 +129,14 @@ export interface Tema {
   epigrafes: Epigrafe[];
   /** true si lo ha creado el usuario y no viene del programa base. */
   propio?: boolean;
+  /** Reloj del last-write-wins (`updated_at`). */
+  actualizado: number;
+  /**
+   * Tumba (`deleted_at`). Cascada: arrastra epígrafes, progreso, cantes,
+   * keypoints, notas y vueltas. Las sesiones NO: haber borrado el tema del
+   * programa no borra las horas que el opositor le echó.
+   */
+  borrado?: number;
 }
 
 /** Punto clave: dato suelto que se cae siempre (artículo, plazo, requisito). */
@@ -140,6 +152,10 @@ export interface KeyPoint {
   fallos: number;
   proximoRepaso: number;
   intervaloDias: number;
+  /** Reloj del last-write-wins (`updated_at`). Cada respuesta lo mueve. */
+  actualizado: number;
+  /** Tumba (`deleted_at`). */
+  borrado?: number;
 }
 
 export interface Nota {
@@ -150,6 +166,8 @@ export interface Nota {
   creado: number;
   /** Reloj del last-write-wins (`updated_at`), igual que en Epigrafe. */
   actualizado: number;
+  /** Tumba (`deleted_at`). */
+  borrado?: number;
 }
 
 /**
@@ -167,6 +185,13 @@ export interface Vuelta {
   id: string;
   temaId: string;
   fecha: number;
+  /**
+   * Reloj del last-write-wins (`updated_at`). Una vuelta no se edita nunca,
+   * pero sí se entierra, y la tumba necesita reloj para poder empujarse.
+   */
+  actualizado: number;
+  /** Tumba (`deleted_at`). La cascada del tema las entierra. */
+  borrado?: number;
 }
 
 export interface ProgresoTema {
@@ -190,6 +215,10 @@ export interface ProgresoTema {
   /** Calculado por el SRS: cuándo toca repasarlo. */
   proximoRepaso?: number;
   favorito?: boolean;
+  /** Reloj del last-write-wins (`updated_at`). */
+  actualizado: number;
+  /** Tumba (`deleted_at`). La pone la cascada al borrar el tema. */
+  borrado?: number;
 }
 
 export interface Sesion {
@@ -234,6 +263,10 @@ export interface Cante {
   conPreparador: boolean;
   feedback?: string;
   analisis?: AnalisisCante;
+  /** Reloj del last-write-wins (`updated_at`): nota, feedback y análisis. */
+  actualizado: number;
+  /** Tumba (`deleted_at`). */
+  borrado?: number;
 }
 
 export type TipoSimulacro = "cante" | "dictamen";
@@ -253,6 +286,10 @@ export interface Simulacro {
   respuesta?: string;
   correccion?: string;
   completado: boolean;
+  /** Reloj del last-write-wins (`updated_at`): la corrección lo mueve. */
+  actualizado: number;
+  /** Tumba (`deleted_at`). */
+  borrado?: number;
 }
 
 export interface MensajeChat {

@@ -18,7 +18,15 @@ import {
   Trash2,
   Wand2,
 } from "lucide-react";
-import { useProgresos, useStore } from "@/lib/store/store";
+import {
+  useCantes,
+  useKeyPoints,
+  useMaterias,
+  useNotas,
+  useProgresos,
+  useStore,
+  useTema,
+} from "@/lib/store/store";
 import {
   AreaTexto,
   Badge,
@@ -52,13 +60,13 @@ export default function FichaTema() {
   const router = useRouter();
   const id = params.id;
 
-  const tema = useStore((s) => s.temas.find((t) => t.id === id));
-  const materias = useStore((s) => s.materias);
+  const tema = useTema(id);
+  const materias = useMaterias();
   const progresos = useProgresos();
   const perfil = useStore((s) => s.perfil);
-  const cantes = useStore((s) => s.cantes);
-  const keypoints = useStore((s) => s.keypoints);
-  const notas = useStore((s) => s.notas);
+  const cantes = useCantes();
+  const keypoints = useKeyPoints();
+  const notas = useNotas();
 
   const setEstado = useStore((s) => s.setEstado);
   const setDificultad = useStore((s) => s.setDificultad);
@@ -558,7 +566,7 @@ function PanelCantes({
   tema: { id: string; numero: number; titulo: string; materiaId: string };
   cantes: Cante[];
 }) {
-  const materias = useStore((s) => s.materias);
+  const materias = useMaterias();
   const perfil = useStore((s) => s.perfil);
   const setAnalisis = useStore((s) => s.setAnalisisCante);
   const removeCante = useStore((s) => s.removeCante);
@@ -787,7 +795,7 @@ function PanelKeyPoints({
 }: {
   tema: { id: string; titulo: string; epigrafes: { id: string; titulo: string; texto?: string }[] };
 }) {
-  const todosKeypoints = useStore((s) => s.keypoints);
+  const todosKeypoints = useKeyPoints();
   const keypoints = React.useMemo(
     () => todosKeypoints.filter((k) => k.temaId === tema.id),
     [todosKeypoints, tema.id],
@@ -988,7 +996,7 @@ function PanelKeyPoints({
 /* ========================================================================== */
 
 function PanelNotas({ tema }: { tema: { id: string } }) {
-  const todasNotas = useStore((s) => s.notas);
+  const todasNotas = useNotas();
   const notas = React.useMemo(
     () => todasNotas.filter((n) => n.temaId === tema.id),
     [todasNotas, tema.id],

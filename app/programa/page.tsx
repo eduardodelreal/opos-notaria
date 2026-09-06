@@ -11,7 +11,13 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { useProgresos, useStore, temasOrdenados } from "@/lib/store/store";
+import {
+  temasOrdenados,
+  useMaterias,
+  useProgresos,
+  useStore,
+  useTemas,
+} from "@/lib/store/store";
 import { materiasOrdenadas } from "@/lib/data/materias";
 import { Cabecera } from "@/components/Shell";
 import {
@@ -36,17 +42,15 @@ import { plural } from "@/lib/utils/texto";
 type Vista = "mural" | "lista";
 
 export default function Programa() {
-  const {
-    materias: materiasSinOrdenar,
-    temas,
-    perfil,
-    addTemasMasivo,
-    addTema,
-    addMateria,
-    updateMateria,
-    removeMateria,
-    removeTema,
-  } = useStore();
+  const perfil = useStore((s) => s.perfil);
+  const materiasSinOrdenar = useMaterias();
+  const temas = useTemas();
+  const addTemasMasivo = useStore((s) => s.addTemasMasivo);
+  const addTema = useStore((s) => s.addTema);
+  const addMateria = useStore((s) => s.addMateria);
+  const updateMateria = useStore((s) => s.updateMateria);
+  const removeMateria = useStore((s) => s.removeMateria);
+  const removeTema = useStore((s) => s.removeTema);
   const progresos = useProgresos();
   // El orden de la barra de materias sale de `Materia.orden`, no del array.
   const materias = React.useMemo(

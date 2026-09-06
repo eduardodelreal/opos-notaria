@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, ChevronRight, Sparkles, X } from "lucide-react";
-import { useStore } from "@/lib/store/store";
+import { useCantes, useMaterias, useStore, useTema } from "@/lib/store/store";
 import {
   AreaTexto,
   Boton,
@@ -41,13 +41,15 @@ function CanteVivo() {
   const params = useSearchParams();
   const temaId = params.get("tema") ?? "";
 
-  const tema = useStore((s) => s.temas.find((t) => t.id === temaId));
+  const tema = useTema(temaId);
   const perfil = useStore((s) => s.perfil);
-  const materias = useStore((s) => s.materias);
-  // Ojo: el selector devuelve la lista cruda y el filtrado va en useMemo.
-  // Filtrar dentro del selector crea un array nuevo en cada render y zustand
-  // lo compara por identidad -> bucle infinito de renders.
-  const todosLosCantes = useStore((s) => s.cantes);
+  const materias = useMaterias();
+  // Ojo: el selector devuelve la lista sin derivar y el filtrado va en
+  // useMemo. Filtrar dentro del selector crea un array nuevo en cada render
+  // y zustand lo compara por identidad -> bucle infinito de renders. Los
+  // hooks de lectura (useCantes, useTema...) sí se pueden usar en el
+  // selector: memorizan y devuelven siempre la misma referencia.
+  const todosLosCantes = useCantes();
   const cantesPrevios = React.useMemo(
     () =>
       todosLosCantes
@@ -399,7 +401,9 @@ function Resumen({
   cantesPrevios: import("@/lib/data/types").Cante[];
   perfil: import("@/lib/data/types").Perfil;
   onGuardar: (
-    c: Omit<import("@/lib/data/types").Cante, "id" | "fecha"> & { fecha?: number },
+    c: Omit<import("@/lib/data/types").Cante, "id" | "fecha" | "actualizado"> & {
+      fecha?: number;
+    },
   ) => import("@/lib/data/types").Cante;
   onAnalisis: (id: string, a: import("@/lib/data/types").AnalisisCante) => void;
   onSalir: () => void;
