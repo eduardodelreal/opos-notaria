@@ -139,6 +139,64 @@ export interface Tema {
   borrado?: number;
 }
 
+/**
+ * Un artículo del temario, guardado entero.
+ *
+ * Cuelga del epígrafe y no del tema, como todo lo demás: al cantar el
+ * epígrafe 3 interesan los artículos de ESE epígrafe, no los cuarenta del
+ * tema en un montón. `epigrafeId` puede faltar mientras el opositor no lo
+ * haya asignado; entonces el artículo vive a nivel de tema.
+ *
+ * El contenido va completo a propósito: la gracia es poder repasar sin
+ * abrir el Código.
+ */
+export interface Articulo {
+  id: string;
+  temaId: string;
+  epigrafeId?: string;
+  /** Cuerpo legal abreviado tal y como lo escribe el opositor: CC, LH, LSC… */
+  cuerpo: string;
+  /** Número tal cual, que no siempre es un entero: "1255", "34", "1255 bis". */
+  numero: string;
+  /** La rúbrica del artículo. "Libertad de pacto", "Fe pública registral". */
+  titulo: string;
+  /** El texto íntegro. Es lo que se lee en el repaso. */
+  contenido: string;
+  /** Orden dentro del epígrafe. El opositor manda sobre el número. */
+  orden: number;
+  creado: number;
+  actualizado: number;
+  borrado?: number;
+}
+
+/**
+ * Cuánto se enseña al recorrer un tema. Es una lente, no una pestaña: el
+ * mismo tema se lee a tres profundidades según para qué se esté abriendo.
+ */
+export type NivelLectura = "articulos" | "articulos-texto" | "completo";
+
+export const NIVELES_LECTURA: {
+  id: NivelLectura;
+  label: string;
+  desc: string;
+}[] = [
+  {
+    id: "articulos",
+    label: "Solo artículos",
+    desc: "Número y rúbrica. El barrido rápido antes de cantar",
+  },
+  {
+    id: "articulos-texto",
+    label: "Artículos desarrollados",
+    desc: "Con el texto íntegro de cada artículo",
+  },
+  {
+    id: "completo",
+    label: "Tema completo",
+    desc: "Los artículos y además el texto de los epígrafes",
+  },
+];
+
 /** Punto clave: dato suelto que se cae siempre (artículo, plazo, requisito). */
 export interface KeyPoint {
   id: string;
@@ -498,4 +556,10 @@ export interface Perfil {
 
   ordenTemas: OrdenTemas;
   vistaPrograma: VistaPrograma;
+  /**
+   * Con cuánto detalle se abre un tema. Se recuerda entre temas: si repasas
+   * a golpe de artículo, el tema siguiente se abre igual y no hay que
+   * volver a elegir en cada uno.
+   */
+  nivelLectura: NivelLectura;
 }

@@ -21,7 +21,7 @@ import { normalizarHex } from "./color";
  *
  * Los valores de apariencia son los que reproducen la app tal y como era
  * antes de que la personalización existiera: lacre, serif a 17px, densidad
- * normal, temas por número y mural. Si alguien los cambia aquí, cambia la
+ * normal, temas por número, mural y el tema entero. Si alguien los cambia aquí, cambia la
  * app de todo el mundo que no haya tocado nada.
  */
 export const PERFIL_INICIAL: Perfil = {
@@ -39,6 +39,9 @@ export const PERFIL_INICIAL: Perfil = {
   densidad: "normal",
   ordenTemas: "numero",
   vistaPrograma: "mural",
+  // El tema se abre entero, como siempre. Quien no cree artículos no nota
+  // que la lente existe.
+  nivelLectura: "completo",
 };
 
 /**
