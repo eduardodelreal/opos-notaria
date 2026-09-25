@@ -93,12 +93,15 @@ plano, y con un intervalo de fondo (30-60 s es razonable) mientras haya cola.
 **El orden del push importa**, porque hay claves ajenas:
 
 ```
-perfiles → materias → temas → epigrafes → progreso_temas
+perfiles → materias → temas → epigrafes → articulos
+                                        → progreso_temas
                                         → sesiones, cantes, keypoints, notas, simulacros
 ```
 
 Subir un epígrafe cuyo tema aún no está en el servidor falla con violación de
-FK. Respeta el orden y no hace falta nada más.
+FK. Respeta el orden y no hace falta nada más. `articulos` va detrás de
+`epigrafes` porque apunta a los dos: a su tema (obligatorio) y a su epígrafe
+(opcional).
 
 ### 3.2 Pull
 
@@ -274,9 +277,19 @@ baja una que ya tienes, es la misma.
   cuerpo del texto de los temas, densidad, orden de los temas, vista del
   programa): son preferencias del OPOSITOR, no del aparato, así que viajan
   como el resto. El last-write-wins por fila basta —nadie está cambiando el
-  acento en dos sitios a la vez— y no hay nada que fusionar campo a campo.
+  acento en dos sitios a la vez— y no hay nada que fusionar campo a campo. Desde
+  `0007` lleva además `nivel_lectura`, la lente con la que se abre un tema
+  (`articulos` | `articulos-texto` | `completo`), por lo mismo: se elige una vez
+  y vale en todos los aparatos. Su DEFAULT es `completo`, que es el tema entero
+  de siempre.
 - **`materias`**, **`temas`**, **`epigrafes`** — se editan al montar el temario.
   Momento intenso pero corto y normalmente en un solo dispositivo.
+- **`articulos`** (0007) — el articulado del temario, guardado entero para poder
+  repasar sin abrir el Código. Se dan de alta pegando bloques y luego casi no se
+  tocan: lo que cambia después es la rúbrica que el troceado no supo separar y el
+  `orden` dentro del epígrafe. Es la fila más cara del expediente —texto íntegro
+  copiado a mano— así que el criterio ante la duda es conservarla: no la borra ni
+  la cascada del epígrafe (ver §7).
 - **`progreso_temas`** — la tabla caliente. Ver §6.
 - **`keypoints`** — cada respuesta muta `aciertos`, `fallos`, `intervalo_dias` y
   `proximo_repaso`. Repasar las mismas tarjetas en dos dispositivos a la vez es
@@ -340,10 +353,11 @@ tumba es lo único que viaja.
 
 ### Cascada
 
-Borrar un tema tiene que arrastrar sus epígrafes, su progreso, sus cantes, sus
-keypoints y sus notas — hoy `removeTema` en el store ya lo hace en local. En el
-servidor lo repite el trigger `cascada_borrado_tema()`, y `cascada_borrado_materia()`
-hace lo propio con los temas de una materia (que encadena el primero).
+Borrar un tema tiene que arrastrar sus epígrafes, sus artículos, su progreso, sus
+cantes, sus keypoints, sus notas y sus vueltas — hoy `removeTema` en el store ya
+lo hace en local. En el servidor lo repite el trigger `cascada_borrado_tema()`, y
+`cascada_borrado_materia()` hace lo propio con los temas de una materia (que
+encadena el primero).
 
 Está duplicado a propósito: si solo lo hiciera el cliente, un dispositivo con la
 app vieja o interrumpido a mitad dejaría huérfanos visibles en los demás. Como
@@ -353,6 +367,17 @@ de los otros dispositivos las recoge sin nada extra.
 **Las `sesiones` NO se cascadean.** Borrar un tema no significa no haberlo
 estudiado; las horas efectivas son historia y no se reescriben. Su `tema_id`
 queda apuntando a un tema con `deleted_at` y la app lo pinta como "tema borrado".
+
+**Del EPÍGRAFE no cuelga cascada ninguna.** Borrar un epígrafe es reorganizar el
+tema, no decir que el 1255 CC ha dejado de entrar en él, y el artículo es lo
+único del modelo que el opositor ha copiado entero a mano: llevárselo por delante
+con el gesto más inocente sería la peor pérdida posible. Sus artículos —igual que
+sus notas y sus keypoints, que ya se comportaban así desde 0001 con su `on delete
+set null`— sobreviven y vuelven al nivel de tema. En local lo hace
+`removeEpigrafe` poniendo `epigrafeId` a `undefined` y recolocándolos al final
+del tema; en el servidor basta la FK. Es una modificación como otra cualquiera:
+mueve el reloj de esas filas y las encola, o el otro dispositivo las seguiría
+enseñando bajo un epígrafe que ya no está.
 
 ### Purga
 
@@ -497,6 +522,14 @@ Consecuencias concretas:
 - `Epigrafe` no tiene `creado`/`actualizado` en el tipo. Los timestamps los pone
   la BD; el cliente los recibirá al bajar y debe guardárselos para el LWW.
 
+Los **artículos** (0007) NO repiten este patrón: viven en una colección plana del
+store (`articulos: Articulo[]`) con `temaId` y `epigrafeId` dentro, igual que las
+notas y los keypoints. No hay nada que aplanar ni que reanidar, y no es una
+incoherencia con los epígrafes: el epígrafe va anidado porque la interfaz edita
+la lista entera de un tirón (`setEpigrafes`), mientras que un artículo se da de
+alta, se mueve y se borra suelto. Anidarlos habría hecho que pegar cuarenta
+artículos reescribiera el tema entero en cada pulsación.
+
 ### 9.3 Las materias precargadas
 
 `ESTADO_INICIAL.materias = MATERIAS` siembra cinco materias en local antes de que
@@ -560,4 +593,6 @@ las filas a sincronizar para arreglar un problema que no se da.
 - [x] Audio en cola aparte, después de la fila (§8). Hecho en `lib/audio/`.
 - [x] Transcripción y comparación del cante con columna propia (§8, migración 0005).
 - [x] La apariencia y el orden de los temas viajan en `perfiles` (migración 0006).
+- [x] Los artículos del temario, con su tabla propia y su sitio en la cascada del
+      tema; la lente de lectura, en `perfiles` (migración 0007).
 - [x] Corrección de la deriva de relojes al sellar (§4). Hecho en `lib/sync/reloj.ts`.

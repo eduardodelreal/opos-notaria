@@ -1,5 +1,6 @@
 import type {
   AnalisisCante,
+  Articulo,
   Cante,
   CanteEpigrafe,
   ComparacionCante,
@@ -72,6 +73,7 @@ export const TABLAS = [
   "materias",
   "temas",
   "epigrafes",
+  "articulos",
   "progreso_temas",
   "sesiones",
   "cantes",
@@ -89,6 +91,7 @@ export const CONFLICTO: Record<Tabla, string> = {
   materias: "id",
   temas: "id",
   epigrafes: "id",
+  articulos: "id",
   // `progreso_temas` no tiene id propio: hay uno por tema y su PK es el tema.
   progreso_temas: "tema_id",
   sesiones: "id",
@@ -128,6 +131,8 @@ export interface FilaPerfil extends Sincronizable {
   densidad: Perfil["densidad"];
   orden_temas: Perfil["ordenTemas"];
   vista_programa: Perfil["vistaPrograma"];
+  /** Lente con la que se abre un tema (0007). */
+  nivel_lectura: Perfil["nivelLectura"];
 }
 
 export interface FilaMateria extends Sincronizable {
@@ -157,6 +162,21 @@ export interface FilaEpigrafe extends Sincronizable {
   orden: number;
   titulo: string;
   texto: string | null;
+  creado_at: string;
+}
+
+export interface FilaArticulo extends Sincronizable {
+  id: string;
+  usuario_id: string;
+  tema_id: string;
+  /** Null mientras el artículo viva a nivel de tema. */
+  epigrafe_id: string | null;
+  cuerpo: string;
+  /** Texto y no entero: hay "1255 bis" y hay "9.1". */
+  numero: string;
+  titulo: string;
+  contenido: string;
+  orden: number;
   creado_at: string;
 }
 
@@ -255,6 +275,7 @@ export type Fila =
   | FilaMateria
   | FilaTema
   | FilaEpigrafe
+  | FilaArticulo
   | FilaProgreso
   | FilaSesion
   | FilaCante
@@ -269,6 +290,7 @@ export interface FilaDe {
   materias: FilaMateria;
   temas: FilaTema;
   epigrafes: FilaEpigrafe;
+  articulos: FilaArticulo;
   progreso_temas: FilaProgreso;
   sesiones: FilaSesion;
   cantes: FilaCante;
@@ -339,6 +361,7 @@ export function aFilaPerfil(
     densidad: perfil.densidad,
     orden_temas: perfil.ordenTemas,
     vista_programa: perfil.vistaPrograma,
+    nivel_lectura: perfil.nivelLectura,
     updated_at: iso(actualizado),
     deleted_at: borrado == null ? null : iso(borrado),
   };
@@ -372,6 +395,7 @@ export function deFilaPerfil(fila: FilaPerfil): Perfil {
     densidad: fila.densidad,
     ordenTemas: fila.orden_temas,
     vistaPrograma: fila.vista_programa,
+    nivelLectura: fila.nivel_lectura,
   });
 }
 
@@ -464,6 +488,44 @@ export function deFilaEpigrafe(f: FilaEpigrafe): Epigrafe & { temaId: string } {
     orden: f.orden,
     titulo: f.titulo,
     texto: f.texto ?? undefined,
+    creado: ms(f.creado_at) ?? relojFila(f),
+    actualizado: relojFila(f),
+    borrado: ms(f.deleted_at),
+  };
+}
+
+/* ------------------------------------------------------------ articulos -- */
+
+/** Tope de la columna `numero` (0007). Se recorta en vez de reventar el push. */
+const NUMERO_MAX = 40;
+
+export function aFilaArticulo(a: Articulo, usuarioId: string): FilaArticulo {
+  return {
+    id: a.id,
+    usuario_id: usuarioId,
+    tema_id: a.temaId,
+    epigrafe_id: texto(a.epigrafeId),
+    cuerpo: a.cuerpo ?? "",
+    numero: (a.numero ?? "").slice(0, NUMERO_MAX),
+    titulo: a.titulo ?? "",
+    contenido: a.contenido ?? "",
+    orden: Math.max(0, Math.round(a.orden ?? 0)),
+    creado_at: iso(a.creado),
+    updated_at: iso(a.actualizado),
+    deleted_at: a.borrado == null ? null : iso(a.borrado),
+  };
+}
+
+export function deFilaArticulo(f: FilaArticulo): Articulo {
+  return {
+    id: f.id,
+    temaId: f.tema_id,
+    epigrafeId: f.epigrafe_id ?? undefined,
+    cuerpo: f.cuerpo ?? "",
+    numero: f.numero ?? "",
+    titulo: f.titulo ?? "",
+    contenido: f.contenido ?? "",
+    orden: num(f.orden) ?? 0,
     creado: ms(f.creado_at) ?? relojFila(f),
     actualizado: relojFila(f),
     borrado: ms(f.deleted_at),

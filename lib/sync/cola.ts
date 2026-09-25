@@ -133,6 +133,7 @@ export function cambiosDe(
   }
 
   lista("materias", parcial.materias, previo.materias);
+  lista("articulos", parcial.articulos, previo.articulos);
   lista("cantes", parcial.cantes, previo.cantes);
   lista("keypoints", parcial.keypoints, previo.keypoints);
   lista("notas", parcial.notas, previo.notas);
@@ -203,6 +204,7 @@ export function encolarTodo(
     marcar("temas", t.id);
     for (const e of t.epigrafes) marcar("epigrafes", e.id);
   }
+  for (const a of exp.articulos) marcar("articulos", a.id);
   for (const temaId of Object.keys(exp.progresos)) marcar("progreso_temas", temaId);
   for (const s of exp.sesiones) marcar("sesiones", s.id);
   for (const c of exp.cantes) marcar("cantes", c.id);

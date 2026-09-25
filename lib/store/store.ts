@@ -33,6 +33,7 @@ import { temasVivos, vivos, vivosMapa } from "../data/vivos";
 import { sellar } from "./sellado";
 import {
   migrarAApariencia,
+  migrarAArticulos,
   migrarARelojes,
   migrarAUuid,
   type ExpedienteV1,
@@ -40,6 +41,7 @@ import {
 } from "./migraciones";
 import type {
   AnalisisCante,
+  Articulo,
   AudioCante,
   OrdenTemas,
   Cante,
@@ -76,6 +78,12 @@ interface Estado {
   perfil: Perfil;
   materias: Materia[];
   temas: Tema[];
+  /**
+   * Los artículos del temario. Van en una colección propia y no anidados
+   * en el tema —como sí van los epígrafes— porque son muchos, se reordenan
+   * solos y cuelgan del epígrafe cuando lo tienen (lib/data/types.ts).
+   */
+  articulos: Articulo[];
   /**
    * Caché de contadores por tema. Lo que se pinta sale de `useProgresos()`,
    * que recalcula `segundos`, `notaMedia` y `vueltas` desde las colecciones
@@ -129,6 +137,23 @@ interface Acciones {
     parcial: Partial<Epigrafe>,
   ) => void;
   removeEpigrafe: (temaId: string, epigrafeId: string) => void;
+
+  // --- artículos ---
+  /** Alta suelta, la del formulario campo a campo. */
+  addArticulo: (
+    temaId: string,
+    datos: Partial<Pick<Articulo, "cuerpo" | "numero" | "titulo" | "contenido" | "epigrafeId">>,
+  ) => Articulo;
+  /** Alta en lote: lo que sale de pegar un bloque y trocearlo. */
+  addArticulos: (
+    temaId: string,
+    filas: { cuerpo: string; numero: string; titulo: string; contenido: string }[],
+    epigrafeId?: string,
+  ) => number;
+  updateArticulo: (id: string, parcial: Partial<Articulo>) => void;
+  removeArticulo: (id: string) => void;
+  /** Sube o baja un artículo dentro de su tema. El opositor manda. */
+  moverArticulo: (id: string, direccion: -1 | 1) => void;
 
   // --- progreso ---
   progresoDe: (temaId: string) => ProgresoTema;
@@ -195,6 +220,7 @@ const ESTADO_INICIAL: Estado = {
   perfil: PERFIL_INICIAL,
   materias: materiasIniciales(),
   temas: [],
+  articulos: [],
   progresos: {},
   sesiones: [],
   cantes: [],
@@ -207,6 +233,58 @@ const ESTADO_INICIAL: Estado = {
   cola: {},
   sincro: MARCAS_INICIALES,
 };
+
+/**
+ * Siguiente posición libre entre los artículos de un tema.
+ *
+ * Cuenta también los borrados, igual que `addMateria`: reutilizar el
+ * `orden` de una tumba sale mal el día que esa tumba vuelve en un pull y
+ * dos artículos se pelean por el mismo sitio.
+ *
+ * El hueco se busca en el TEMA entero y no dentro del epígrafe aunque el
+ * orden sea de epígrafe: así los valores no se repiten nunca dentro del
+ * tema y mover un artículo de epígrafe no lo mete en mitad de otra lista.
+ */
+function siguienteOrden(articulos: Articulo[], temaId: string): number {
+  let max = 0;
+  for (const a of articulos) {
+    if (a.temaId === temaId && a.orden > max) max = a.orden;
+  }
+  return max + 1;
+}
+
+/**
+ * Saca del epígrafe los artículos que colgaban de él y los deja a nivel de
+ * tema. Es lo que hace la app cuando se borra un epígrafe (ver
+ * `removeEpigrafe`).
+ *
+ * Se les da posición al final de los sueltos del tema para que no caigan
+ * en mitad de otra lista con el `orden` que tenían dentro del epígrafe.
+ */
+function desasignarEpigrafes(
+  articulos: Articulo[],
+  epigrafes: Set<string>,
+): Articulo[] {
+  if (!epigrafes.size) return articulos;
+  const afectados = articulos.filter(
+    (a) => a.borrado == null && a.epigrafeId != null && epigrafes.has(a.epigrafeId),
+  );
+  if (!afectados.length) return articulos;
+
+  const ultimo = new Map<string, number>();
+  for (const a of articulos) {
+    ultimo.set(a.temaId, Math.max(ultimo.get(a.temaId) ?? 0, a.orden));
+  }
+  const nuevos = new Map<string, number>();
+  for (const a of afectados) {
+    const orden = (ultimo.get(a.temaId) ?? 0) + 1;
+    ultimo.set(a.temaId, orden);
+    nuevos.set(a.id, orden);
+  }
+  return articulos.map((a) =>
+    nuevos.has(a.id) ? { ...a, epigrafeId: undefined, orden: nuevos.get(a.id)! } : a,
+  );
+}
 
 function progresoVacio(temaId: string): ProgresoTema {
   return {
@@ -294,6 +372,7 @@ function cascadaTemas(s: Estado, ids: Set<string>, ahora: number): Partial<Estad
       };
     }),
     progresos,
+    articulos: marcarPorTema(s.articulos, ids, ahora),
     cantes: marcarPorTema(s.cantes, ids, ahora),
     keypoints: marcarPorTema(s.keypoints, ids, ahora),
     notas: marcarPorTema(s.notas, ids, ahora),
@@ -500,6 +579,12 @@ export const useStore = create<Store>()(
             .map((e) => (e.borrado == null ? { ...e, borrado: ahora } : e));
 
           return {
+            // Mismo criterio que `removeEpigrafe`: los artículos del
+            // epígrafe que se va sobreviven, sueltos a nivel de tema.
+            articulos: desasignarEpigrafes(
+              s.articulos,
+              new Set(idas.filter((e) => e.borrado === ahora).map((e) => e.id)),
+            ),
             temas: s.temas.map((t) =>
               t.id === temaId ? { ...t, epigrafes: [...siguientes, ...idas] } : t,
             ),
@@ -549,10 +634,22 @@ export const useStore = create<Store>()(
 
       // Renumerar deja constancia: cada epígrafe que cambia de posición es
       // una fila más que tendrá que subir, no solo la que desaparece.
+      //
+      // Los ARTÍCULOS del epígrafe NO se borran con él: se quedan a nivel
+      // de tema. Borrar un epígrafe es reorganizar el tema, no decir que el
+      // 1255 CC ya no entra en él; y el artículo es lo único del modelo que
+      // el opositor ha copiado entero a mano, así que llevárselo por
+      // delante al recolocar un epígrafe sería la peor pérdida posible por
+      // el gesto más inocente. Es además lo que ya hacen sus vecinos: las
+      // notas y los keypoints también cuelgan de un epígrafe opcional y
+      // tampoco los arrastra —el esquema lo dice con un `on delete set
+      // null` y la cascada del servidor solo va por `tema_id`—. Si el
+      // opositor quiere que desaparezcan, los borra: están a la vista.
       removeEpigrafe: (temaId, epigrafeId) =>
         escribir((s) => {
           const ahora = Date.now();
           return {
+            articulos: desasignarEpigrafes(s.articulos, new Set([epigrafeId])),
             temas: s.temas.map((t) => {
               if (t.id !== temaId) return t;
               let orden = 0;
@@ -568,6 +665,110 @@ export const useStore = create<Store>()(
                   return e.orden === orden ? e : { ...e, orden };
                 }),
               };
+            }),
+          };
+        }),
+
+      /* ---------------- artículos ----------------
+
+         Los da de alta el opositor pegando bloques enteros: el alta en
+         lote es la vía normal y `addArticulo` la excepción para retocar.
+         El orden es un campo y no la posición del array, como en las
+         materias: un array no sobrevive a una tabla.
+
+         Como todo lo demás, estas acciones NO tocan `actualizado` a mano:
+         lo mueve el sellado dentro de `escribir()`, que además es quien
+         sabe la hora buena (la corregida contra el servidor). */
+
+      addArticulo: (temaId, datos) => {
+        const ahora = Date.now();
+        const articulo: Articulo = {
+          id: uid(),
+          temaId,
+          epigrafeId: datos.epigrafeId || undefined,
+          cuerpo: (datos.cuerpo ?? "").trim(),
+          numero: (datos.numero ?? "").trim(),
+          titulo: (datos.titulo ?? "").trim(),
+          contenido: (datos.contenido ?? "").trim(),
+          orden: siguienteOrden(get().articulos, temaId),
+          creado: ahora,
+          actualizado: ahora,
+        };
+        escribir((s) => ({ articulos: [...s.articulos, articulo] }));
+        return articulo;
+      },
+
+      addArticulos: (temaId, filas, epigrafeId) => {
+        const limpias = filas.filter((f) => f.numero.trim());
+        if (!limpias.length) return 0;
+        escribir((s) => {
+          const ahora = Date.now();
+          let orden = siguienteOrden(s.articulos, temaId);
+          return {
+            articulos: [
+              ...s.articulos,
+              ...limpias.map((f) => ({
+                id: uid(),
+                temaId,
+                epigrafeId: epigrafeId || undefined,
+                cuerpo: f.cuerpo.trim(),
+                numero: f.numero.trim(),
+                titulo: f.titulo.trim(),
+                contenido: f.contenido.trim(),
+                orden: orden++,
+                creado: ahora,
+                actualizado: ahora,
+              })),
+            ],
+          };
+        });
+        return limpias.length;
+      },
+
+      updateArticulo: (id, parcial) =>
+        escribir((s) => ({
+          articulos: s.articulos.map((a) => (a.id === id ? { ...a, ...parcial } : a)),
+        })),
+
+      removeArticulo: (id) =>
+        escribir((s) => ({
+          articulos: marcarBorradas(s.articulos, new Set([id]), Date.now()),
+        })),
+
+      /**
+       * Intercambia el `orden` con el del vecino, igual que `moverMateria`:
+       * una reordenación toca dos filas y no la lista entera, que es lo que
+       * el last-write-wins agradece.
+       *
+       * Los vecinos son los del MISMO epígrafe, porque es así como se
+       * pintan: si el vecino pudiera ser un artículo de otro epígrafe, la
+       * flecha no movería nada a la vista y el opositor la pulsaría tres
+       * veces sin entender nada.
+       */
+      moverArticulo: (id, direccion) =>
+        escribir((s) => {
+          const actual = s.articulos.find((a) => a.id === id);
+          if (!actual || actual.borrado != null) return {};
+          const hermanos = s.articulos
+            .filter(
+              (a) =>
+                a.borrado == null &&
+                a.temaId === actual.temaId &&
+                (a.epigrafeId ?? null) === (actual.epigrafeId ?? null),
+            )
+            .sort((a, b) => a.orden - b.orden);
+          const i = hermanos.findIndex((a) => a.id === id);
+          const vecino = hermanos[i + direccion];
+          if (!vecino) return {};
+          // Dos artículos con el mismo `orden` (importados, o pegados por
+          // dos aparatos) no se moverían nunca al intercambiar: se separan.
+          const ordenVecino =
+            vecino.orden === actual.orden ? actual.orden + direccion : vecino.orden;
+          return {
+            articulos: s.articulos.map((a) => {
+              if (a.id === actual.id) return { ...a, orden: ordenVecino };
+              if (a.id === vecino.id) return { ...a, orden: actual.orden };
+              return a;
             }),
           };
         }),
@@ -930,11 +1131,12 @@ export const useStore = create<Store>()(
         const s = get();
         return JSON.stringify(
           {
-            version: 3,
+            version: 4,
             exportado: new Date().toISOString(),
             perfil: s.perfil,
             materias: vivos(s.materias),
             temas: temasVivos(s.temas),
+            articulos: vivos(s.articulos),
             progresos: vivosMapa(s.progresos),
             sesiones: s.sesiones,
             cantes: vivos(s.cantes),
@@ -987,6 +1189,9 @@ export const useStore = create<Store>()(
             notas: d.notas ?? [],
             simulacros: d.simulacros ?? [],
             vueltas: d.vueltas ?? [],
+            // Una copia hecha antes de que los artículos existieran no los
+            // trae: el expediente se queda sin ellos, no a medias.
+            articulos: d.articulos ?? [],
           };
           const ahora = Date.now();
           set((s) => ({
@@ -1025,7 +1230,7 @@ export const useStore = create<Store>()(
     }),
     {
       name: "opos-notaria",
-      version: 4,
+      version: 5,
       storage: createJSONStorage(() => idbStorage),
       // v1 → v2: ids a uuid, referencias reescritas, `Materia.orden`,
       // timestamps de los epígrafes y registros de vuelta.
@@ -1034,6 +1239,9 @@ export const useStore = create<Store>()(
       // donde está el porqué de cada valor elegido.
       // v3 → v4: los campos de apariencia del perfil, con los valores que
       // dejan la app exactamente como estaba.
+      // v4 → v5: la colección de artículos y la lente de lectura del
+      // perfil. Quien no tenga artículos ve la misma app de ayer: la
+      // colección nace vacía y la lente, en "completo".
       migrate: (guardado, version) => {
         let estado = guardado as ExpedienteV2;
         if (version < 2) {
@@ -1047,7 +1255,9 @@ export const useStore = create<Store>()(
             JSON.stringify({ fecha: Date.now(), mapa: migrado.mapa }),
           );
         }
-        return migrarAApariencia(migrarARelojes(estado)) as unknown as Store;
+        return migrarAArticulos(
+          migrarAApariencia(migrarARelojes(estado)),
+        ) as unknown as Store;
       },
       partialize: (s) => {
         const { hidratado, ...resto } = s as Estado;
@@ -1141,6 +1351,7 @@ function expedienteDe(s: Estado): Expediente {
     perfil: s.perfil,
     materias: s.materias,
     temas: s.temas,
+    articulos: s.articulos,
     progresos: s.progresos,
     sesiones: s.sesiones,
     cantes: s.cantes,
@@ -1310,6 +1521,7 @@ export function progresosDerivados(): Record<string, ProgresoTema> {
 
 const selMaterias = (s: Store) => vivos(s.materias);
 const selTemas = (s: Store) => temasVivos(s.temas);
+const selArticulos = (s: Store) => vivos(s.articulos);
 const selCantes = (s: Store) => vivos(s.cantes);
 const selKeypoints = (s: Store) => vivos(s.keypoints);
 const selNotas = (s: Store) => vivos(s.notas);
@@ -1319,6 +1531,13 @@ const selSesiones = (s: Store) => s.sesiones;
 export const useMaterias = () => useStore(selMaterias);
 /** Temas vivos, y dentro de cada uno solo sus epígrafes vivos. */
 export const useTemas = () => useStore(selTemas);
+/**
+ * Artículos vivos de TODO el expediente. Quien quiera los de un tema
+ * filtra con `articulosDeTema()` dentro de un `useMemo`: filtrar dentro
+ * del selector crea un array nuevo en cada render y con él el bucle
+ * infinito de siempre (React #185).
+ */
+export const useArticulos = () => useStore(selArticulos);
 export const useCantes = () => useStore(selCantes);
 export const useKeyPoints = () => useStore(selKeypoints);
 export const useNotas = () => useStore(selNotas);
@@ -1348,6 +1567,7 @@ export function estadoVivo() {
     perfil: s.perfil,
     materias: vivos(s.materias),
     temas: temasVivos(s.temas),
+    articulos: vivos(s.articulos),
     progresos: vivosMapa(s.progresos),
     sesiones: s.sesiones,
     cantes: vivos(s.cantes),

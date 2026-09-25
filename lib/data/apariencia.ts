@@ -2,11 +2,13 @@ import type {
   Acento,
   Densidad,
   FuenteTemas,
+  NivelLectura,
   OrdenTemas,
   Perfil,
   Tono,
   VistaPrograma,
 } from "./types";
+import { NIVELES_LECTURA } from "./types";
 import {
   conAlfa,
   contraste,
@@ -332,6 +334,7 @@ const ACENTOS_VALIDOS = new Set<string>(ACENTOS.map((a) => a.id));
 const FUENTES: FuenteTemas[] = ["serif", "sans"];
 const DENSIDADES: Densidad[] = ["normal", "compacta"];
 const VISTAS: VistaPrograma[] = ["mural", "lista"];
+const NIVELES_VALIDOS = new Set<string>(NIVELES_LECTURA.map((n) => n.id));
 
 export const ORDENES: { id: OrdenTemas; label: string; pista: string }[] = [
   {
@@ -380,6 +383,14 @@ export function esVistaPrograma(v: unknown): v is VistaPrograma {
 }
 export function esOrdenTemas(v: unknown): v is OrdenTemas {
   return typeof v === "string" && ORDENES_VALIDOS.has(v);
+}
+/**
+ * La lente de lectura del tema. Vive con el resto de guardas aunque no sea
+ * apariencia en sentido estricto: es lo que lee `normalizarPerfil`, y lo
+ * que decide qué es un perfil válido tiene que estar en un solo sitio.
+ */
+export function esNivelLectura(v: unknown): v is NivelLectura {
+  return typeof v === "string" && NIVELES_VALIDOS.has(v);
 }
 
 /** Recorta el cuerpo del texto al rango que el esquema acepta. */

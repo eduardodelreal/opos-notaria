@@ -31,7 +31,19 @@ import {
   resumenGlobal,
   statsPorMateria,
 } from "../lib/data/srs.ts";
-import { migrarAApariencia, migrarARelojes } from "../lib/store/migraciones.ts";
+import { migrarAApariencia, migrarAArticulos, migrarARelojes } from "../lib/store/migraciones.ts";
+import {
+  agruparPorEpigrafe,
+  articulosPropuestos,
+  claveArticulo,
+  etiquetaArticulo,
+  extraerCitas,
+  indiceCruzado,
+  normalizarCuerpo,
+  normalizarNumero,
+  parsearArticulos,
+  temasDeArticulo,
+} from "../lib/data/articulos.ts";
 import { temasOrdenados, ordenDeTriaje } from "../lib/store/store.ts";
 import { PERFIL_INICIAL, normalizarPerfil, perfilDeFabrica } from "../lib/data/perfil.ts";
 import {
@@ -185,6 +197,19 @@ function sembrar() {
     nota: 3,
     conPreparador: false,
   });
+  // Dos artículos en el tema que se borra (uno archivado en el epígrafe A y
+  // otro todavía suelto) y uno en el que se queda: es lo que permite ver que
+  // la cascada llega a ellos y que no se lleva por delante los del vecino.
+  useStore.getState().addArticulo(tema.id, {
+    cuerpo: "CC",
+    numero: "1255",
+    titulo: "Libertad de pacto",
+    contenido: "Los contratantes pueden establecer los pactos…",
+    epigrafeId: epigrafes[0].id,
+  });
+  useStore.getState().addArticulo(tema.id, { cuerpo: "LH", numero: "34" });
+  useStore.getState().addArticulo(otro.id, { cuerpo: "CC", numero: "1255" });
+
   useStore.getState().addKeyPoint(tema.id, "¿Artículo?", "1902 CC");
   useStore.getState().addNota(tema.id, "Nota del tema que se borrará");
   const simulacro = useStore.getState().addSimulacro({
@@ -346,8 +371,17 @@ console.log("\nborrado lógico de un tema");
 
   prueba("exportar() no se lleva las tumbas", () => {
     const copia = JSON.parse(useStore.getState().exportar());
-    assert.equal(copia.version, 3);
+    assert.equal(copia.version, 4);
     assert.ok(!copia.temas.some((t) => t.id === tema.id));
+    assert.ok(
+      !copia.articulos.some((a) => a.temaId === tema.id),
+      "el export se llevó la tumba de un artículo",
+    );
+    assert.equal(
+      copia.articulos.filter((a) => a.temaId === otro.id).length,
+      1,
+      "el export perdió el artículo del tema vivo",
+    );
     assert.ok(!copia.cantes.length);
     assert.ok(!copia.notas.length);
     assert.ok(!copia.keypoints.length);
@@ -355,6 +389,24 @@ console.log("\nborrado lógico de un tema");
     assert.equal(copia.progresos[tema.id], undefined);
     assert.ok(copia.sesiones.length >= 2, "el export perdió las sesiones");
     assert.ok(copia.temas.some((t) => t.id === otro.id), "se llevó el tema vivo");
+  });
+
+  prueba("borrar el tema arrastra sus artículos y no toca los del vecino", () => {
+    const todos = useStore.getState().articulos;
+    const suyos = todos.filter((a) => a.temaId === tema.id);
+    assert.equal(suyos.length, 2, "los artículos han desaparecido del array");
+    assert.ok(suyos.every((a) => a.borrado != null), "algún artículo sigue vivo");
+    // La tumba tiene que poder empujarse, y para eso necesita reloj.
+    assert.ok(suyos.every((a) => a.actualizado >= a.borrado));
+    const vecino = todos.filter((a) => a.temaId === otro.id);
+    assert.equal(vecino.length, 1);
+    assert.equal(vecino[0].borrado, undefined, "se llevó por delante al vecino");
+  });
+
+  prueba("ninguna lectura enseña los artículos del tema borrado", () => {
+    const vivosAhora = estadoVivo();
+    assert.ok(!vivosAhora.articulos.some((a) => a.temaId === tema.id));
+    assert.equal(vivosAhora.articulos.length, 1);
   });
 
   prueba("el tema vivo no se ve afectado", () => {
@@ -1164,6 +1216,556 @@ console.log("\norden de los temas");
     const copia = [...entrada];
     temasOrdenados(entrada, materias(), "nota", progresos(), 45);
     assert.deepEqual(entrada, copia);
+  });
+}
+
+
+/* ============================================================
+   8 · Artículos: acciones del store
+
+   Lo que se comprueba aquí es lo que, si se rompe, no da error sino
+   pérdida de trabajo: el artículo es lo único del modelo que el opositor
+   ha copiado entero a mano.
+   ============================================================ */
+
+console.log("\nartículos");
+{
+  const st = () => useStore.getState();
+  st().borrarTodo();
+  const materia = st().addMateria("Civil", "CIV", "#c94152");
+  const tema = st().addTema(materia.id, 47, "La hipoteca");
+  const otroTema = st().addTema(materia.id, 48, "La prenda");
+  st().addEpigrafe(tema.id, "Concepto");
+  st().addEpigrafe(tema.id, "Caracteres");
+  const [epA, epB] = st().temas.find((t) => t.id === tema.id).epigrafes;
+
+  const arts = () => vivos(st().articulos);
+  const deTema = (id = tema.id) => arts().filter((a) => a.temaId === id);
+
+  prueba("el alta suelta guarda el artículo entero", () => {
+    const a = st().addArticulo(tema.id, {
+      cuerpo: "CC",
+      numero: "1857",
+      titulo: "Requisitos esenciales",
+      contenido: "Son requisitos esenciales de los contratos de prenda e hipoteca…",
+      epigrafeId: epA.id,
+    });
+    const guardado = arts().find((x) => x.id === a.id);
+    assert.equal(guardado.contenido.startsWith("Son requisitos"), true);
+    assert.equal(guardado.epigrafeId, epA.id);
+    assert.ok(guardado.creado > 0 && guardado.actualizado > 0);
+  });
+
+  prueba("el alta en lote numera en orden y no pisa lo que ya había", () => {
+    const n = st().addArticulos(
+      tema.id,
+      [
+        { cuerpo: "CC", numero: "1858", titulo: "", contenido: "Es también de esencia…" },
+        { cuerpo: "CC", numero: "1859", titulo: "Pacto comisorio", contenido: "El acreedor no puede…" },
+      ],
+      epA.id,
+    );
+    assert.equal(n, 2);
+    const ordenes = deTema().map((a) => a.orden);
+    assert.deepEqual([...new Set(ordenes)].length, ordenes.length, "hay órdenes repetidos");
+    assert.deepEqual([...ordenes].sort((x, y) => x - y), [1, 2, 3]);
+  });
+
+  prueba("una fila sin número no se da de alta", () => {
+    const antes = deTema().length;
+    const n = st().addArticulos(tema.id, [
+      { cuerpo: "CC", numero: "  ", titulo: "", contenido: "texto huérfano" },
+    ]);
+    assert.equal(n, 0);
+    assert.equal(deTema().length, antes);
+  });
+
+  prueba("editar un artículo mueve su reloj", () => {
+    const a = deTema()[0];
+    const antes = a.actualizado;
+    st().updateArticulo(a.id, { titulo: "Requisitos esenciales de prenda e hipoteca" });
+    const despues = arts().find((x) => x.id === a.id);
+    assert.ok(despues.actualizado > antes, "el reloj no se ha movido");
+    assert.equal(despues.titulo, "Requisitos esenciales de prenda e hipoteca");
+  });
+
+  prueba("reescribir un artículo con lo mismo NO mueve su reloj", () => {
+    const a = deTema()[0];
+    const antes = a.actualizado;
+    st().updateArticulo(a.id, { titulo: a.titulo, contenido: a.contenido });
+    assert.equal(arts().find((x) => x.id === a.id).actualizado, antes);
+  });
+
+  prueba("moverArticulo intercambia el orden y mueve los DOS relojes", () => {
+    const orden = () => deTema().sort((a, b) => a.orden - b.orden).map((a) => a.numero);
+    assert.deepEqual(orden(), ["1857", "1858", "1859"]);
+    const antes = new Map(deTema().map((a) => [a.id, a.actualizado]));
+    const segundo = deTema().find((a) => a.numero === "1858");
+    st().moverArticulo(segundo.id, -1);
+    assert.deepEqual(orden(), ["1858", "1857", "1859"]);
+    const movidos = deTema().filter((a) => a.actualizado > antes.get(a.id));
+    assert.equal(movidos.length, 2, `relojes movidos: ${movidos.length}`);
+    st().moverArticulo(segundo.id, 1);
+    assert.deepEqual(orden(), ["1857", "1858", "1859"]);
+  });
+
+  prueba("moverArticulo no se sale de la lista", () => {
+    const antes = deTema().map((a) => a.orden);
+    const lista = deTema().sort((a, b) => a.orden - b.orden);
+    st().moverArticulo(lista[0].id, -1);
+    st().moverArticulo(lista[lista.length - 1].id, 1);
+    assert.deepEqual(deTema().map((a) => a.orden), antes);
+  });
+
+  prueba("moverArticulo solo cambia de sitio dentro de su epígrafe", () => {
+    const suelto = st().addArticulo(tema.id, { cuerpo: "LH", numero: "104" });
+    const antes = arts().find((a) => a.id === suelto.id).orden;
+    // Es el único de su grupo: no tiene con quién intercambiarse, aunque por
+    // delante haya tres artículos del epígrafe A.
+    st().moverArticulo(suelto.id, -1);
+    assert.equal(arts().find((a) => a.id === suelto.id).orden, antes);
+    st().removeArticulo(suelto.id);
+  });
+
+  prueba("borrar un artículo deja tumba, no vacía el array", () => {
+    const a = deTema().find((x) => x.numero === "1859");
+    st().removeArticulo(a.id);
+    const crudo = st().articulos.find((x) => x.id === a.id);
+    assert.ok(crudo, "la fila ha desaparecido del array y no habría nada que empujar");
+    assert.ok(crudo.borrado > 0);
+    assert.ok(crudo.actualizado >= crudo.borrado, "la tumba no lleva reloj");
+    assert.ok(!arts().some((x) => x.id === a.id), "la tumba se sigue leyendo");
+  });
+
+  prueba("borrar un EPÍGRAFE no borra sus artículos: se quedan en el tema", () => {
+    st().addArticulo(tema.id, { cuerpo: "CC", numero: "1860", epigrafeId: epB.id });
+    const antes = deTema().length;
+    const delEpigrafe = deTema().filter((a) => a.epigrafeId === epA.id);
+    assert.ok(delEpigrafe.length >= 2, "el escenario no tiene artículos en el epígrafe");
+    const relojes = new Map(delEpigrafe.map((a) => [a.id, a.actualizado]));
+
+    st().removeEpigrafe(tema.id, epA.id);
+
+    assert.equal(deTema().length, antes, "la cuenta de artículos ha cambiado");
+    const despues = deTema().filter((a) => relojes.has(a.id));
+    assert.ok(despues.every((a) => a.borrado == null), "se ha borrado alguno");
+    assert.ok(despues.every((a) => !a.epigrafeId), "alguno sigue colgando del epígrafe muerto");
+    // Es una modificación como otra cualquiera: sin reloj nuevo no viajaría y
+    // el otro dispositivo los seguiría enseñando bajo un epígrafe que no está.
+    assert.ok(
+      despues.every((a) => a.actualizado > relojes.get(a.id)),
+      "quedarse sin epígrafe no ha movido el reloj",
+    );
+    // Y no se meten en mitad de la lista de otro: van al final del tema.
+    const ordenes = deTema().map((a) => a.orden);
+    assert.equal([...new Set(ordenes)].length, ordenes.length, "hay órdenes repetidos");
+  });
+
+  prueba("el artículo del otro epígrafe sigue en el suyo", () => {
+    const a = deTema().find((x) => x.numero === "1860");
+    assert.equal(a.epigrafeId, epB.id);
+  });
+
+  prueba("borrar el tema sí arrastra sus artículos", () => {
+    st().addArticulo(otroTema.id, { cuerpo: "CC", numero: "1863" });
+    st().removeTema(tema.id);
+    assert.equal(deTema().length, 0, "quedan artículos vivos del tema borrado");
+    assert.equal(deTema(otroTema.id).length, 1, "se llevó los del tema vecino");
+    assert.ok(
+      st().articulos.filter((a) => a.temaId === tema.id).every((a) => a.borrado != null),
+    );
+  });
+
+  prueba("borrar la materia arrastra los artículos de todos sus temas", () => {
+    st().removeMateria(materia.id);
+    assert.equal(arts().length, 0, "sobrevivió algún artículo a la materia borrada");
+  });
+
+  prueba("la cola de sincronización no encola artículos sin Supabase", () => {
+    // Sin cuenta configurada la app entera funciona en local: llevar la
+    // cuenta de una cola que nadie va a vaciar solo gastaría escrituras.
+    assert.deepEqual(Object.keys(st().cola), []);
+  });
+}
+
+/* ============================================================
+   9 · Troceado de un bloque pegado
+
+   La vía de entrada real: el opositor copia y pega. Lo que se vigila aquí
+   es lo de siempre con los parsers — que no se inventen nada. Mejor una
+   rúbrica vacía que una rúbrica falsa, y mejor "no he encontrado nada" que
+   un troceado por donde caiga.
+   ============================================================ */
+
+console.log("\ntroceado de un bloque pegado");
+{
+  prueba("parte un bloque del Código por sus cabeceras", () => {
+    const r = parsearArticulos(
+      [
+        "Artículo 1255.",
+        "Los contratantes pueden establecer los pactos, cláusulas y condiciones que tengan por conveniente.",
+        "",
+        "Artículo 1256.",
+        "La validez y el cumplimiento de los contratos no pueden dejarse al arbitrio de uno de los contratantes.",
+      ].join("\n"),
+      "CC",
+    );
+    assert.equal(r.length, 2);
+    assert.equal(r[0].numero, "1255");
+    assert.equal(r[0].cuerpo, "CC");
+    assert.ok(r[0].contenido.startsWith("Los contratantes"));
+    assert.ok(!r[0].contenido.includes("Artículo 1256"), "se ha comido la frontera");
+    assert.equal(r[1].numero, "1256");
+  });
+
+  prueba("separa la rúbrica cuando va en su propia línea", () => {
+    const r = parsearArticulos(
+      [
+        "Artículo 34",
+        "Fe pública registral",
+        "El tercero que de buena fe adquiera a título oneroso algún derecho de persona que",
+        "en el Registro aparezca con facultades para transmitirlo, será mantenido en su adquisición.",
+      ].join("\n"),
+      "LH",
+    );
+    assert.equal(r.length, 1);
+    assert.equal(r[0].titulo, "Fe pública registral");
+    assert.equal(r[0].cuerpo, "LH");
+    assert.ok(r[0].contenido.startsWith("El tercero"));
+  });
+
+  prueba("separa la rúbrica cuando va detrás del número", () => {
+    const r = parsearArticulos(
+      ["Art. 1858 CC — Realización del valor", "Es también de esencia de estos contratos…"].join("\n"),
+    );
+    assert.equal(r[0].numero, "1858");
+    assert.equal(r[0].cuerpo, "CC");
+    assert.equal(r[0].titulo, "Realización del valor");
+    assert.ok(r[0].contenido.startsWith("Es también"));
+  });
+
+  prueba("si la rúbrica no se distingue, se deja VACÍA y no se inventa", () => {
+    // Lo que sigue al número es el texto del artículo, no su rúbrica, y la
+    // forma es EXACTAMENTE la misma que la de "1858. Realización del valor".
+    // Lo único que las separa es que una frase termina en punto.
+    const r = parsearArticulos(
+      [
+        "Artículo 1256. La validez de los contratos no puede dejarse al arbitrio.",
+        "Lo dijo el Tribunal Supremo mil veces.",
+      ].join("\n"),
+      "CC",
+    );
+    assert.equal(r.length, 1);
+    assert.equal(r[0].titulo, "", `se ha inventado la rúbrica: ${r[0].titulo}`);
+    assert.ok(r[0].contenido.startsWith("La validez"));
+    assert.ok(r[0].contenido.includes("Tribunal Supremo"), "se ha comido el texto");
+  });
+
+  prueba("una rúbrica larguísima tampoco se da por buena", () => {
+    const r = parsearArticulos(
+      [
+        "Artículo 1255. Los contratantes pueden establecer los pactos, cláusulas y condiciones que tengan por conveniente",
+        "siempre que no sean contrarios a las leyes, a la moral ni al orden público.",
+      ].join("\n"),
+      "CC",
+    );
+    assert.equal(r[0].titulo, "");
+    assert.ok(r[0].contenido.startsWith("Los contratantes"));
+  });
+
+  prueba("una línea corta sin nada debajo es el artículo, no su rúbrica", () => {
+    const r = parsearArticulos("Artículo 3. Las leyes no tendrán efecto retroactivo", "CC");
+    assert.equal(r[0].titulo, "");
+    assert.equal(r[0].contenido, "Las leyes no tendrán efecto retroactivo");
+  });
+
+  prueba("lee el número con ordinal y con punto de millar", () => {
+    const r = parsearArticulos(
+      ["Artículo 1.255 bis.", "Texto del bis.", "ARTÍCULO 9.1", "Texto del apartado."].join("\n"),
+      "CC",
+    );
+    assert.equal(r[0].numero, "1255 bis");
+    assert.equal(r[1].numero, "9.1");
+  });
+
+  prueba("acepta la cabecera sin la palabra «artículo» si trae el cuerpo", () => {
+    const r = parsearArticulos(["104 LH", "La hipoteca sujeta directa e inmediatamente los bienes."].join("\n"));
+    assert.equal(r.length, 1);
+    assert.equal(r[0].numero, "104");
+    assert.equal(r[0].cuerpo, "LH");
+  });
+
+  prueba("un índice de epígrafes numerado NO se lee como articulado", () => {
+    // Sin esta cautela, pegar el índice de un tema daría de alta media
+    // docena de artículos que no existen.
+    const r = parsearArticulos(
+      ["1. Concepto y caracteres", "2. Clases de hipoteca", "3. La hipoteca de máximo"].join("\n"),
+    );
+    assert.deepEqual(r, []);
+  });
+
+  prueba("sin ninguna cabecera se dice que no se ha encontrado nada", () => {
+    const r = parsearArticulos("La hipoteca es un derecho real de garantía que recae sobre inmuebles.");
+    assert.deepEqual(r, []);
+  });
+
+  prueba("el cuerpo de la cabecera gana al que se pasa por defecto", () => {
+    const r = parsearArticulos(["Art. 34 LH", "Fe pública", "El tercero que…"].join("\n"), "CC");
+    assert.equal(r[0].cuerpo, "LH");
+  });
+}
+
+/* ============================================================
+   10 · Citas de pasada
+
+   Distinto del troceado: aquí no hay texto del artículo, solo la mención.
+   De una mención salen número y cuerpo, y nada más.
+   ============================================================ */
+
+console.log("\ncitas en el texto de los epígrafes");
+{
+  prueba("detecta las formas que el opositor escribe de verdad", () => {
+    const c = extraerCitas(
+      "Rige el art. 1255 CC, matizado por el artículo 34 de la Ley Hipotecaria y por el art. 9.1 LH.",
+    );
+    assert.deepEqual(
+      c.map((x) => `${x.numero} ${x.cuerpo}`),
+      ["1255 CC", "34 LH", "9.1 LH"],
+    );
+  });
+
+  prueba("una serie «y ss.» se marca, no se expande", () => {
+    // Inventarse el 1089, el 1090 y los que hagan falta sería dar de alta
+    // artículos que nadie ha escrito.
+    const c = extraerCitas("Ver arts. 1088 y ss. CC");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].numero, "1088");
+    assert.equal(c[0].siguientes, true);
+  });
+
+  prueba("una enumeración da todos los números con el mismo cuerpo", () => {
+    const c = extraerCitas("Los arts. 1261, 1262 y 1274 del Código Civil.");
+    assert.deepEqual(c.map((x) => x.numero), ["1261", "1262", "1274"]);
+    assert.ok(c.every((x) => x.cuerpo === "CC"));
+  });
+
+  prueba("de la cita NO sale ni rúbrica ni contenido", () => {
+    const [c] = extraerCitas("art. 1255 CC");
+    assert.deepEqual(Object.keys(c).sort(), [
+      "cuerpo",
+      "epigrafeId",
+      "numero",
+      "siguientes",
+      "veces",
+    ]);
+  });
+
+  prueba("sin cuerpo reconocible el cuerpo se queda vacío", () => {
+    const [c] = extraerCitas("como dice el artículo 47, la cosa cambia");
+    assert.equal(c.numero, "47");
+    assert.equal(c.cuerpo, "");
+  });
+
+  prueba("la misma cita repetida se cuenta, no se duplica", () => {
+    const c = extraerCitas("El art. 1255 CC y, más abajo, otra vez el artículo 1.255 del Código Civil.");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].veces, 2);
+  });
+
+  prueba("un número suelto que no es una cita no se recoge", () => {
+    assert.deepEqual(extraerCitas("La sanción es de 1.500 euros y el plazo, de 30 días."), []);
+  });
+
+  prueba("propone solo lo que todavía no está dado de alta", () => {
+    const st = () => useStore.getState();
+    st().borrarTodo();
+    const m = st().addMateria("Civil", "CIV", "#c94152");
+    const t = st().addTema(m.id, 47, "La hipoteca");
+    st().addEpigrafe(t.id, "Concepto", "Según el art. 1857 CC y el 104 LH, la hipoteca…");
+    const tema = temasVivos(st().temas).find((x) => x.id === t.id);
+
+    assert.deepEqual(
+      articulosPropuestos(tema, st().articulos).map((c) => `${c.numero} ${c.cuerpo}`),
+      ["1857 CC", "104 LH"],
+    );
+
+    st().addArticulo(t.id, { cuerpo: "CC", numero: "1857" });
+    assert.deepEqual(
+      articulosPropuestos(tema, st().articulos).map((c) => `${c.numero} ${c.cuerpo}`),
+      ["104 LH"],
+    );
+  });
+}
+
+/* ============================================================
+   11 · Índice cruzado
+
+   "El 1255 CC te sale en los temas 67, 70 y 95." Es lo que más pregunta el
+   tribunal, y todo depende de normalizar: CC, C.C. y Código Civil son lo
+   mismo, y 1255 y 1.255 también.
+   ============================================================ */
+
+console.log("\níndice cruzado");
+{
+  prueba("normaliza el cuerpo legal", () => {
+    assert.equal(normalizarCuerpo("CC"), "CC");
+    assert.equal(normalizarCuerpo("C.C."), "CC");
+    assert.equal(normalizarCuerpo("Código Civil"), "CC");
+    assert.equal(normalizarCuerpo("codigo civil"), "CC");
+    assert.equal(normalizarCuerpo("Ley Hipotecaria"), "LH");
+    // Una ley que no está en la lista pero se cita con siglas se respeta.
+    assert.equal(normalizarCuerpo("L.M.V."), "LMV");
+    // Lo que no parece un cuerpo no se convierte en uno.
+    assert.equal(normalizarCuerpo("la doctrina"), "");
+  });
+
+  prueba("normaliza el número", () => {
+    assert.equal(normalizarNumero("1.255"), "1255");
+    assert.equal(normalizarNumero("1255"), "1255");
+    assert.equal(normalizarNumero("9.1"), "9.1", "se ha comido el apartado");
+    assert.equal(normalizarNumero("1255 BIS"), "1255 bis");
+    assert.equal(normalizarNumero("34."), "34");
+  });
+
+  prueba("dos formas de escribir el mismo artículo comparten clave", () => {
+    assert.equal(claveArticulo("C.C.", "1.255"), claveArticulo("Código Civil", "1255"));
+    assert.notEqual(claveArticulo("CC", "1255"), claveArticulo("LH", "1255"));
+    // Sin cuerpo no se cruza con los que sí lo tienen: el 34 a secas puede
+    // ser el de cualquier ley y decidirlo por el opositor sería mentir.
+    assert.notEqual(claveArticulo("", "34"), claveArticulo("LH", "34"));
+  });
+
+  prueba("dice en qué otros temas aparece el artículo", () => {
+    const st = () => useStore.getState();
+    st().borrarTodo();
+    const m = st().addMateria("Civil", "CIV", "#c94152");
+    const t67 = st().addTema(m.id, 67, "Obligaciones");
+    const t70 = st().addTema(m.id, 70, "Contratos");
+    const t95 = st().addTema(m.id, 95, "Compraventa");
+    const t99 = st().addTema(m.id, 99, "Ajeno");
+
+    st().addArticulo(t67.id, { cuerpo: "CC", numero: "1255" });
+    // Escrito de otra manera: tiene que cruzar igual.
+    st().addArticulo(t95.id, { cuerpo: "C.C.", numero: "1.255" });
+    st().addArticulo(t99.id, { cuerpo: "LH", numero: "1255" });
+    // En el 70 no está dado de alta: solo se menciona en el texto.
+    st().addEpigrafe(t70.id, "Autonomía de la voluntad", "Lo consagra el art. 1255 del Código Civil.");
+
+    const temas = temasVivos(st().temas);
+    const articulos = vivos(st().articulos);
+    const ref = articulos.find((a) => a.temaId === t67.id);
+
+    const otros = temasDeArticulo(ref, articulos, temas);
+    assert.deepEqual(otros.map((a) => a.numeroTema), [70, 95], "el cruce no cuadra");
+    assert.deepEqual(otros.map((a) => a.fuente), ["cita", "articulo"]);
+    assert.ok(!otros.some((a) => a.temaId === t67.id), "se incluye a sí mismo");
+    assert.ok(!otros.some((a) => a.temaId === t99.id), "cruza artículos de otra ley");
+  });
+
+  prueba("el índice completo pone el alta por delante de la cita", () => {
+    const st = () => useStore.getState();
+    st().borrarTodo();
+    const m = st().addMateria("Civil", "CIV", "#c94152");
+    const t = st().addTema(m.id, 67, "Obligaciones");
+    st().addEpigrafe(t.id, "Concepto", "El art. 1255 CC dice…");
+    st().addArticulo(t.id, { cuerpo: "CC", numero: "1255" });
+
+    const apariciones = indiceCruzado(vivos(st().articulos), temasVivos(st().temas)).get(
+      claveArticulo("CC", "1255"),
+    );
+    assert.equal(apariciones.length, 1, "el mismo tema sale dos veces");
+    assert.equal(apariciones[0].fuente, "articulo");
+  });
+
+  prueba("un tema borrado desaparece del índice cruzado", () => {
+    const st = () => useStore.getState();
+    st().borrarTodo();
+    const m = st().addMateria("Civil", "CIV", "#c94152");
+    const a = st().addTema(m.id, 1, "Vivo");
+    const b = st().addTema(m.id, 2, "Se borra");
+    st().addArticulo(a.id, { cuerpo: "CC", numero: "1255" });
+    st().addArticulo(b.id, { cuerpo: "CC", numero: "1255" });
+    st().removeTema(b.id);
+
+    const ref = vivos(st().articulos).find((x) => x.temaId === a.id);
+    // Se le pasan las colecciones EN CRUDO a propósito: el índice tiene que
+    // filtrar las tumbas por su cuenta, porque es lo que hará el día que
+    // alguien se lo llame sin pasar por los hooks.
+    const otros = temasDeArticulo(ref, st().articulos, st().temas);
+    assert.deepEqual(otros, []);
+  });
+
+  prueba("agrupa los artículos por epígrafe y deja los sueltos al final", () => {
+    const st = () => useStore.getState();
+    st().borrarTodo();
+    const m = st().addMateria("Civil", "CIV", "#c94152");
+    const t = st().addTema(m.id, 1, "Tema");
+    st().addEpigrafe(t.id, "Uno");
+    st().addEpigrafe(t.id, "Dos");
+    const eps = temasVivos(st().temas).find((x) => x.id === t.id).epigrafes;
+    st().addArticulo(t.id, { cuerpo: "CC", numero: "3" });
+    st().addArticulo(t.id, { cuerpo: "CC", numero: "1", epigrafeId: eps[0].id });
+    st().addArticulo(t.id, { cuerpo: "CC", numero: "2", epigrafeId: eps[1].id });
+
+    const grupos = agruparPorEpigrafe(vivos(st().articulos), eps);
+    assert.deepEqual(
+      grupos.map((g) => [g.epigrafe?.titulo ?? "(sueltos)", g.articulos.map((a) => a.numero)]),
+      [
+        ["Uno", ["1"]],
+        ["Dos", ["2"]],
+        ["(sueltos)", ["3"]],
+      ],
+    );
+  });
+
+  prueba("la etiqueta del artículo se lee entera", () => {
+    assert.equal(etiquetaArticulo({ cuerpo: "C.C.", numero: "1.255" }), "artículo 1255 CC");
+    assert.equal(etiquetaArticulo({ numero: "34" }), "artículo 34");
+  });
+}
+
+/* ============================================================
+   12 · La lente de lectura
+
+   Quien no cree ningún artículo tiene que ver EXACTAMENTE la app de hoy:
+   el tema entero.
+   ============================================================ */
+
+console.log("\nlente de lectura");
+{
+  prueba("el perfil de fábrica abre el tema entero", () => {
+    assert.equal(PERFIL_INICIAL.nivelLectura, "completo");
+  });
+
+  prueba("un perfil sin lente cae en el tema entero", () => {
+    // Es el perfil de quien tenía la app instalada antes de todo esto.
+    const { nivelLectura, ...sinLente } = PERFIL_INICIAL;
+    assert.equal(normalizarPerfil(sinLente).nivelLectura, "completo");
+  });
+
+  prueba("una lente inventada no llega a la interfaz", () => {
+    assert.equal(
+      normalizarPerfil({ ...PERFIL_INICIAL, nivelLectura: "diagonal" }).nivelLectura,
+      "completo",
+    );
+  });
+
+  prueba("las tres lentes válidas se conservan", () => {
+    for (const n of ["articulos", "articulos-texto", "completo"]) {
+      assert.equal(normalizarPerfil({ ...PERFIL_INICIAL, nivelLectura: n }).nivelLectura, n);
+    }
+  });
+
+  prueba("elegir lente es una escritura del perfil como otra cualquiera", () => {
+    const st = () => useStore.getState();
+    st().borrarTodo();
+    st().setPerfil({ nivelLectura: "articulos" });
+    assert.equal(st().perfil.nivelLectura, "articulos");
+  });
+
+  prueba("un expediente de la v4 estrena la colección de artículos vacía", () => {
+    const migrado = migrarAArticulos({ materias: [], temas: [] });
+    assert.deepEqual(migrado.articulos, []);
   });
 }
 

@@ -1,6 +1,7 @@
 import { uid } from "../utils/id";
 import { normalizarPerfil } from "../data/perfil";
 import type {
+  Articulo,
   Cante,
   Epigrafe,
   KeyPoint,
@@ -118,6 +119,8 @@ export interface ExpedienteV3 {
   perfil?: Perfil;
   materias: Materia[];
   temas: Tema[];
+  /** Solo lo trae un expediente guardado con la v5 o posterior. */
+  articulos?: Articulo[];
   progresos: Record<string, ProgresoTema>;
   sesiones: Sesion[];
   cantes: Cante[];
@@ -440,4 +443,31 @@ export function migrarARelojes(guardado: ExpedienteV2): ExpedienteV3 {
 
 export function migrarAApariencia(guardado: ExpedienteV3): ExpedienteV3 {
   return { ...guardado, perfil: normalizarPerfil(guardado.perfil) };
+}
+
+
+/* ============================================================
+   v4 → v5: los artículos del temario
+
+   La colección `articulos` no existía. Aquí no hay nada que reconstruir —no
+   se puede adivinar qué artículos estudia nadie— así que la migración es
+   exactamente lo que tiene que ser: crear el array vacío y no tocar nada
+   más. Quien no dé de alta un artículo ve la misma app de ayer.
+
+   Lo que sí importa es que el array EXISTA. Media docena de sitios recorren
+   `s.articulos` sin preguntar (el sellado, la cola, el push, la cascada de
+   borrado del tema), y un `undefined` ahí revienta la primera escritura del
+   opositor que abra la app con su expediente de ayer.
+
+   La lente de lectura del perfil (`nivelLectura`) no se toca aquí: la
+   rellena `normalizarPerfil`, que es el único sitio donde se decide qué es
+   un perfil válido y por el que ya pasa `migrarAApariencia`.
+   ============================================================ */
+
+export interface ExpedienteV5 extends ExpedienteV3 {
+  articulos: Articulo[];
+}
+
+export function migrarAArticulos(guardado: ExpedienteV3): ExpedienteV5 {
+  return { ...guardado, articulos: lista<Articulo>(guardado.articulos) };
 }

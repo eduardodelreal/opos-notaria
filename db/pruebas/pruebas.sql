@@ -106,6 +106,10 @@ begin
     values (pruebas.id(p_pref, 2), p_uid, pruebas.id(p_pref, 1), 1, 'Tema 1');
   insert into public.epigrafes (id, usuario_id, tema_id, orden, titulo, texto)
     values (pruebas.id(p_pref, 3), p_uid, pruebas.id(p_pref, 2), 0, 'Epígrafe 1', 'texto');
+  insert into public.articulos (id, usuario_id, tema_id, epigrafe_id, cuerpo, numero, titulo, contenido, orden)
+    values (pruebas.id(p_pref, 11), p_uid, pruebas.id(p_pref, 2), pruebas.id(p_pref, 3),
+            'CC', '1255', 'Libertad de pacto',
+            'Los contratantes pueden establecer los pactos, cláusulas y condiciones que tengan por conveniente.', 1);
   insert into public.progreso_temas (tema_id, usuario_id, estado, segundos)
     values (pruebas.id(p_pref, 2), p_uid, 'estudiando', 1200);
   insert into public.sesiones (id, usuario_id, tema_id, tipo, inicio, fin, segundos)
@@ -130,13 +134,13 @@ begin
 end;
 $$;
 
--- Las once tablas con usuario_id (perfiles va aparte: su RLS es contra la PK).
+-- Las doce tablas con usuario_id (perfiles va aparte: su RLS es contra la PK).
 create function pruebas.tablas()
 returns text[]
 language sql
 immutable
 as $$
-  select array['materias','temas','epigrafes','progreso_temas',
+  select array['materias','temas','epigrafes','articulos','progreso_temas',
                'sesiones','cantes','keypoints','notas','simulacros',
                'vueltas','suscripciones_aviso'];
 $$;
@@ -221,7 +225,7 @@ begin
     execute format('select count(*) from public.%I', t) into total;
     if total <> 1 then fallos := fallos || t || '(ve ' || total || ' filas, esperaba 1) '; end if;
   end loop;
-  perform pruebas.comprobar('rls', 'select: A no ve ninguna fila de B en las 11 tablas',
+  perform pruebas.comprobar('rls', 'select: A no ve ninguna fila de B en las 12 tablas',
     fallos = '', coalesce(nullif(fallos, ''), 'todas aisladas'));
 
   -- perfiles: su RLS va contra la PK.
@@ -293,7 +297,7 @@ begin
   if n <> 0 then fallos := fallos || 'perfiles(' || n || ') '; end if;
 
   perform pruebas.comprobar('delete', 'un delete sin where afecta a 0 filas y no da error',
-    fallos = '', coalesce(nullif(fallos, ''), 'las 12 tablas rechazan el delete'));
+    fallos = '', coalesce(nullif(fallos, ''), 'las 13 tablas rechazan el delete'));
 
   select count(*) into despues from public.materias;
   perform pruebas.comprobar('delete', 'nada ha desaparecido tras los delete',
@@ -427,12 +431,12 @@ begin
   marca := now();
   update public.temas set deleted_at = marca, updated_at = marca where id = tema;
 
-  foreach t in array array['epigrafes','progreso_temas','cantes','keypoints','notas'] loop
+  foreach t in array array['epigrafes','articulos','progreso_temas','cantes','keypoints','notas'] loop
     execute format('select count(*) from public.%I where tema_id = %L and deleted_at is null', t, tema) into n;
     if n <> 0 then fallos := fallos || t || '(' || n || ' sin borrar) '; end if;
   end loop;
-  perform pruebas.comprobar('cascada', 'borrar un tema arrastra epígrafes, progreso, cantes, keypoints y notas',
-    fallos = '', coalesce(nullif(fallos, ''), 'los 5 hijos quedan con deleted_at'));
+  perform pruebas.comprobar('cascada', 'borrar un tema arrastra epígrafes, artículos, progreso, cantes, keypoints y notas',
+    fallos = '', coalesce(nullif(fallos, ''), 'los 6 hijos quedan con deleted_at'));
 
   select deleted_at is not null into ses_borrada from public.sesiones where tema_id = tema;
   perform pruebas.comprobar('cascada', 'las SESIONES no se cascadean (las horas son historia)',
@@ -1035,6 +1039,10 @@ begin
   select gen_random_uuid(), t.usuario_id, t.id, 'e', t.updated_at
     from public.temas t where t.titulo = 't';
 
+  insert into public.articulos (id, usuario_id, tema_id, cuerpo, numero, updated_at)
+  select gen_random_uuid(), t.usuario_id, t.id, 'CC', '1255', t.updated_at
+    from public.temas t where t.titulo = 't';
+
   insert into public.progreso_temas (tema_id, usuario_id, updated_at)
   select t.id, t.usuario_id, t.updated_at from public.temas t where t.titulo = 't';
 
@@ -1126,8 +1134,8 @@ begin
   end loop;
 
   perform pruebas.comprobar('indices',
-    'el pull incremental (usuario_id + updated_at) usa el índice *_pull_idx en las 11 tablas',
-    fallos = '', coalesce(nullif(fallos, ''), 'las 11 usan su índice de pull'));
+    'el pull incremental (usuario_id + updated_at) usa el índice *_pull_idx en las 12 tablas',
+    fallos = '', coalesce(nullif(fallos, ''), 'las 12 usan su índice de pull'));
 end;
 $$;
 commit;
@@ -1168,8 +1176,8 @@ begin
     n = 0, 'índices de pull con WHERE: ' || n);
 
   select count(*) into n from pg_indexes where schemaname = 'public' and indexname like '%\_pull\_idx';
-  perform pruebas.comprobar('indices', 'existen los 11 índices de pull',
-    n = 11, 'encontrados: ' || n);
+  perform pruebas.comprobar('indices', 'existen los 12 índices de pull',
+    n = 12, 'encontrados: ' || n);
 end;
 $$;
 
@@ -1346,6 +1354,229 @@ begin
 end;
 $$;
 commit;
+
+-- ============================================================================
+-- 9quinquies · artículos y lente de lectura (0007)
+--
+-- Lo que hay que demostrar de la tabla nueva es exactamente lo mismo que se
+-- exige a las demás, porque es donde vive el trabajo más caro del opositor
+-- (el texto íntegro copiado a mano):
+--
+--   · la RLS la aísla de verdad, en las cuatro operaciones;
+--   · el DELETE físico es imposible;
+--   · borrar un tema arrastra sus artículos, que es lo que evita el artículo
+--     fantasma en el índice cruzado;
+--   · borrar un EPÍGRAFE no los arrastra: se quedan a nivel de tema. Es la
+--     decisión de diseño de esta migración y por eso está aquí abajo, escrita
+--     como prueba y no solo como comentario.
+-- ============================================================================
+
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  mat  uuid := pruebas.id('aaaa1111', 601);
+  tema uuid := pruebas.id('aaaa1111', 602);
+  epi  uuid := pruebas.id('aaaa1111', 603);
+  art  uuid := pruebas.id('aaaa1111', 604);
+  suelto uuid := pruebas.id('aaaa1111', 605);
+  n int;
+  f record;
+begin
+  insert into public.materias (id, usuario_id, nombre) values (mat, a, 'M artículos');
+  insert into public.temas (id, usuario_id, materia_id, numero, titulo)
+    values (tema, a, mat, 47, 'La hipoteca');
+  insert into public.epigrafes (id, usuario_id, tema_id, orden, titulo)
+    values (epi, a, tema, 1, 'Concepto');
+  insert into public.articulos (id, usuario_id, tema_id, epigrafe_id, cuerpo, numero, titulo, contenido, orden)
+    values (art, a, tema, epi, 'CC', '1857', 'Requisitos esenciales',
+            'Son requisitos esenciales de los contratos de prenda e hipoteca…', 1);
+
+  -- El artículo se guarda ENTERO: es la razón de ser de la tabla.
+  select cuerpo, numero, titulo, contenido, orden, epigrafe_id, deleted_at
+    into f from public.articulos where id = art;
+  perform pruebas.comprobar('articulos', 'el artículo se guarda entero, con su texto',
+    f.cuerpo = 'CC' and f.numero = '1857' and f.titulo = 'Requisitos esenciales'
+      and f.contenido like 'Son requisitos%' and f.deleted_at is null,
+    'numero=' || f.numero || ' titulo=' || f.titulo);
+
+  -- Números que un `int` no admitiría. Es por lo que la columna es texto.
+  insert into public.articulos (id, usuario_id, tema_id, cuerpo, numero, orden)
+    values (suelto, a, tema, 'LH', '1255 bis', 2);
+  update public.articulos set numero = '9.1' where id = suelto;
+  select numero into f from public.articulos where id = suelto;
+  perform pruebas.comprobar('articulos', 'el número admite "1255 bis" y "9.1"',
+    f.numero = '9.1', 'numero = ' || f.numero);
+
+  -- Un artículo sin epígrafe es una fila legítima: vive a nivel de tema
+  -- mientras el opositor no lo archive.
+  select epigrafe_id into f from public.articulos where id = suelto;
+  perform pruebas.comprobar('articulos', 'un artículo puede vivir sin epígrafe (a nivel de tema)',
+    f.epigrafe_id is null, 'epigrafe_id = ' || coalesce(f.epigrafe_id::text, 'null'));
+
+  -- RLS: aislamiento en las cuatro operaciones.
+  select count(*) into n from public.articulos where usuario_id = b;
+  perform pruebas.comprobar('articulos', 'rls: A no ve ni un artículo de B',
+    n = 0, 'artículos de B visibles para A: ' || n);
+
+  update public.articulos set titulo = 'secuestrado' where usuario_id = b;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('articulos', 'rls: A no puede editar un artículo de B',
+    n = 0, 'filas ajenas tocadas: ' || n);
+
+  perform pruebas.comprobar('articulos', 'rls: A no puede crear un artículo a nombre de B',
+    pruebas.rechazado(format(
+      'insert into public.articulos (usuario_id, tema_id, cuerpo, numero)
+       values (%L, %L, ''CC'', ''1'')', b, pruebas.id('bbbb2222', 2))),
+    'esperado SQLSTATE 42501');
+
+  perform pruebas.comprobar('articulos', 'rls: A no puede regalarle su artículo a B',
+    pruebas.rechazado(format(
+      'update public.articulos set usuario_id = %L where id = %L', b, art)),
+    'esperado SQLSTATE 42501');
+
+  -- El DELETE físico no existe: sin política, borra cero filas y no da error.
+  delete from public.articulos;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('articulos', 'el delete del cliente no borra ni un artículo',
+    n = 0, 'filas borradas: ' || n);
+  select count(*) into n from public.articulos;
+  perform pruebas.comprobar('articulos', 'los artículos siguen ahí tras el delete',
+    n = 3, 'artículos visibles para A: ' || n);
+end;
+$$;
+commit;
+
+-- Borrar un EPÍGRAFE no se lleva por delante sus artículos.
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  epi uuid := pruebas.id('aaaa1111', 603);
+  art uuid := pruebas.id('aaaa1111', 604);
+  f record;
+begin
+  update public.epigrafes set deleted_at = now(), updated_at = now() where id = epi;
+
+  select deleted_at, epigrafe_id into f from public.articulos where id = art;
+  perform pruebas.comprobar('articulos', 'borrar un epígrafe NO borra sus artículos',
+    f.deleted_at is null,
+    'deleted_at = ' || coalesce(f.deleted_at::text, 'null'));
+  -- El epígrafe sigue siendo una tumba, no una fila eliminada, así que la FK
+  -- no se dispara: quien devuelve el artículo al nivel de tema es la app.
+  -- Lo que esta prueba fija es que la BASE no lo entierra por su cuenta.
+  perform pruebas.comprobar('articulos', 'el artículo sigue colgando de la tumba del epígrafe, vivo',
+    f.epigrafe_id = epi, 'epigrafe_id = ' || coalesce(f.epigrafe_id::text, 'null'));
+end;
+$$;
+commit;
+
+-- Borrar el TEMA sí los arrastra, y la tumba baja en el pull.
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  tema uuid := pruebas.id('aaaa1111', 602);
+  art uuid := pruebas.id('aaaa1111', 604);
+  antes timestamptz;
+  n int;
+  f record;
+begin
+  select updated_at into antes from public.articulos where id = art;
+  update public.temas set deleted_at = now(), updated_at = now() where id = tema;
+
+  select count(*) into n from public.articulos
+   where tema_id = tema and deleted_at is null;
+  perform pruebas.comprobar('articulos', 'borrar un tema arrastra TODOS sus artículos',
+    n = 0, 'artículos vivos del tema borrado: ' || n);
+
+  select updated_at into f from public.articulos where id = art;
+  perform pruebas.comprobar('articulos', 'la cascada avanza updated_at del artículo (si no, no se propaga)',
+    f.updated_at > antes, antes || ' -> ' || f.updated_at);
+
+  select count(*) into n from public.articulos
+   where usuario_id = a and updated_at > antes;
+  perform pruebas.comprobar('articulos', 'la tumba del artículo la devuelve el pull incremental',
+    n = 2, 'filas devueltas por el pull: ' || n);
+end;
+$$;
+commit;
+
+-- La lente de lectura del perfil.
+begin;
+do $$ begin perform pruebas.como('11111111-1111-4111-8111-111111111111'); end $$;
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  b uuid := '22222222-2222-4222-8222-222222222222';
+  nivel text;
+  antes timestamptz;
+  despues timestamptz;
+  n int;
+begin
+  -- LA prueba de la migración: un perfil que ya existía —el de A lo creó el
+  -- trigger del alta, mucho antes de 0007— sigue abriendo el tema entero.
+  -- Quien no cree artículos no nota que la lente existe.
+  select nivel_lectura, updated_at into nivel, antes from public.perfiles where id = a;
+  perform pruebas.comprobar('lectura', 'el valor por defecto es el tema entero de siempre',
+    nivel = 'completo', 'nivel_lectura = ' || coalesce(nivel, 'null'));
+
+  update public.perfiles set nivel_lectura = 'articulos' where id = a;
+  select nivel_lectura, updated_at into nivel, despues from public.perfiles where id = a;
+  perform pruebas.comprobar('lectura', 'el opositor puede cambiar de lente',
+    nivel = 'articulos', 'nivel_lectura = ' || nivel);
+  -- Si no moviera el reloj, el otro dispositivo no se enteraría jamás.
+  perform pruebas.comprobar('lectura', 'cambiar de lente mueve updated_at (si no, no viaja)',
+    despues > antes, antes::text || ' -> ' || despues::text);
+
+  update public.perfiles set nivel_lectura = 'articulos-texto' where id = a;
+  select nivel_lectura into nivel from public.perfiles where id = a;
+  perform pruebas.comprobar('lectura', 'los tres niveles son válidos',
+    nivel = 'articulos-texto', 'nivel_lectura = ' || nivel);
+
+  perform pruebas.comprobar('lectura', 'no se acepta una lente inventada',
+    pruebas.rechazado($x$update public.perfiles set nivel_lectura = 'diagonal'$x$, '23514'),
+    'esperado SQLSTATE 23514 (check)');
+
+  update public.perfiles set nivel_lectura = 'articulos' where id = b;
+  get diagnostics n = row_count;
+  perform pruebas.comprobar('lectura', 'rls: A no puede cambiarle la lente a B',
+    n = 0, 'perfiles ajenos tocados: ' || n);
+end;
+$$;
+commit;
+
+-- El índice del cruce: "¿en qué otros temas tengo dado de alta este artículo?".
+-- No basta con que el índice exista: hay que ver que el planificador lo elige,
+-- y para eso hace falta volumen dentro de UN MISMO opositor (el de A, que es
+-- quien hace la consulta). Con cuatro artículos cualquier plan vale.
+do $$
+declare
+  a uuid := '11111111-1111-4111-8111-111111111111';
+  plan text;
+begin
+  perform pruebas.servidor();
+
+  -- Un temario entero de artículos repartidos por cuerpos y números: es lo
+  -- que tiene un opositor a mitad de preparación.
+  insert into public.articulos (id, usuario_id, tema_id, cuerpo, numero, orden)
+  select gen_random_uuid(), a, pruebas.id('aaaa1111', 602),
+         'L' || (g % 40), (g % 900)::text, g
+    from generate_series(1, 4000) g;
+  analyze public.articulos;
+
+  execute 'explain (format json) select tema_id from public.articulos
+             where usuario_id = ''11111111-1111-4111-8111-111111111111''
+               and cuerpo = ''L7'' and numero = ''123''
+               and deleted_at is null'
+    into plan;
+  perform pruebas.comprobar('articulos', 'el índice cruzado (usuario_id, cuerpo, numero) se usa',
+    plan ilike '%articulos_cruce_idx%', 'plan: ' || left(plan, 200));
+end;
+$$;
 
 -- ============================================================================
 -- 9quater · El `creado_at` del servidor, que es de donde sale el desfase

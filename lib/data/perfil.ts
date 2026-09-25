@@ -6,6 +6,7 @@ import {
   esAcento,
   esDensidad,
   esFuenteTemas,
+  esNivelLectura,
   esOrdenTemas,
   esTono,
   esVistaPrograma,
@@ -72,6 +73,12 @@ export function normalizarPerfil(bruto: Partial<Perfil> | undefined | null): Per
     vistaPrograma: esVistaPrograma(p.vistaPrograma)
       ? p.vistaPrograma
       : PERFIL_INICIAL.vistaPrograma,
+    // Un expediente guardado antes de que la lente existiera no la trae, y
+    // una fila anterior a 0007 la baja a null: en los dos casos hay que
+    // caer en "completo", que es el tema entero de siempre.
+    nivelLectura: esNivelLectura(p.nivelLectura)
+      ? p.nivelLectura
+      : PERFIL_INICIAL.nivelLectura,
   };
 }
 
@@ -87,7 +94,9 @@ export function normalizarPerfil(bruto: Partial<Perfil> | undefined | null): Per
  * `tema` y `fechaInicio` no cuentan: el primero es lo primero que toca todo
  * el mundo por reflejo (y el guion antiparpadeo ya lo recuerda en este
  * navegador) y el segundo lo pone la instalación sin que el usuario haga
- * nada.
+ * nada. `nivelLectura` tampoco, y por lo mismo: es una lente que se cambia
+ * de un toque mientras se lee, no una configuración que nadie se siente a
+ * decidir.
  *
  * El resto de la apariencia SÍ cuenta, y no es una incoherencia con lo
  * anterior: elegir acento, tipografía, cuerpo, densidad y orden es

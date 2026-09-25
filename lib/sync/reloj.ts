@@ -60,9 +60,9 @@ import { ms, type Fila, type Tabla } from "./tablas";
    ocuparía un hueco del bloque.
 
    Solo se miran las tablas cuyo push NO manda `creado_at`. En `epigrafes`,
-   `keypoints` y `notas` el cliente sí lo manda, así que el servidor le
-   devolvería su propia marca y la medida sería siempre cero: un aparato
-   desviado se creería en hora.
+   `articulos`, `keypoints` y `notas` el cliente sí lo manda, así que el
+   servidor le devolvería su propia marca y la medida sería siempre cero: un
+   aparato desviado se creería en hora.
    ============================================================ */
 
 /**

@@ -1,4 +1,5 @@
 import type {
+  Articulo,
   Cante,
   Epigrafe,
   KeyPoint,
@@ -44,6 +45,7 @@ interface ConReloj {
 export interface Sellable {
   materias: Materia[];
   temas: Tema[];
+  articulos: Articulo[];
   progresos: Record<string, ProgresoTema>;
   cantes: Cante[];
   keypoints: KeyPoint[];
@@ -64,6 +66,7 @@ export interface Sellable {
  */
 const LISTAS_SELLADAS = [
   "materias",
+  "articulos",
   "cantes",
   "keypoints",
   "notas",

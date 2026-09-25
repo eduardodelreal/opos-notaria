@@ -152,7 +152,7 @@ function transportePsql(usuarioId, control = {}) {
    ============================================================ */
 
 const CLAVES = [
-  "perfil", "materias", "temas", "progresos", "sesiones", "cantes",
+  "perfil", "materias", "temas", "articulos", "progresos", "sesiones", "cantes",
   "keypoints", "notas", "simulacros", "vueltas", "chat", "crono",
   "cola", "sincro",
 ];
@@ -240,6 +240,9 @@ const { desfaseAplicable, medirDesfase, muestraDeRespuesta } = await import(
   "../lib/sync/reloj.ts"
 );
 const { apariencia } = await import("../lib/data/apariencia.ts");
+const { claveArticulo, parsearArticulos, temasDeArticulo } = await import(
+  "../lib/data/articulos.ts"
+);
 
 const control = {};
 const nube = transportePsql(USUARIO, control);
@@ -337,6 +340,111 @@ prueba("el perfil del portátil llega al móvil", () => {
    campo que no existiera en la tabla se perdería en silencio.
    ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------
+   2bis · Los artículos del temario
+
+   Es lo más caro que guarda el opositor —el texto íntegro copiado a
+   mano— y va en su propia tabla desde 0007. Aquí se comprueba lo único
+   que no se puede comprobar contra un doble: que las columnas existen,
+   que el texto entero sobrevive al viaje y que la cascada del SERVIDOR
+   los entierra con su tema.
+   ------------------------------------------------------------------ */
+
+console.log("\n== los artículos viajan ==");
+
+const arts = await en("portatil", (st) => {
+  const tema = temasVivos(useStore.getState().temas).find((t) => t.id === datos.temaId);
+  const concepto = tema.epigrafes[0];
+  // Como en la app: se pega el bloque, se trocea y se da de alta en lote.
+  const troceados = parsearArticulos(
+    [
+      "Artículo 1857.",
+      "Son requisitos esenciales de los contratos de prenda e hipoteca que se constituyan",
+      "para asegurar el cumplimiento de una obligación principal.",
+      "",
+      "Art. 1858 CC — Realización del valor",
+      "Es también de esencia de estos contratos que, vencida la obligación principal,",
+      "puedan ser enajenadas las cosas en que consiste la prenda o hipoteca.",
+    ].join("\n"),
+    "CC",
+  );
+  st.addArticulos(datos.temaId, troceados, concepto.id);
+  const suelto = st.addArticulo(datos.temaId, { cuerpo: "LH", numero: "104" });
+  return { troceados, sueltoId: suelto.id, epigrafeId: concepto.id };
+});
+
+prueba("el troceado del bloque pegado da dos artículos con su texto", () => {
+  assert.equal(arts.troceados.length, 2);
+  assert.equal(arts.troceados[0].numero, "1857");
+  assert.equal(arts.troceados[1].titulo, "Realización del valor");
+});
+
+await sincroniza("portatil", nube);
+
+prueba("los artículos suben a `articulos`, columna a columna", () => {
+  const filas = enLaNube(
+    `select to_jsonb(t.*) from public.articulos t where deleted_at is null order by orden`,
+  );
+  assert.equal(filas.length, 3, `subieron ${filas.length} artículos`);
+  const [primero] = filas;
+  assert.equal(primero.tema_id, datos.temaId);
+  assert.equal(primero.epigrafe_id, arts.epigrafeId);
+  assert.equal(primero.cuerpo, "CC");
+  assert.equal(primero.numero, "1857");
+  // El texto íntegro es la razón de ser de la tabla: si llega recortado,
+  // el opositor abre el Código igualmente y esto no sirve de nada.
+  assert.ok(primero.contenido.includes("obligación principal"));
+  // El que no está archivado en ningún epígrafe sube con la columna a null.
+  const suelto = filas.find((f) => f.id === arts.sueltoId);
+  assert.equal(suelto.epigrafe_id, null);
+  assert.equal(suelto.cuerpo, "LH");
+});
+
+await sincroniza("movil", nube);
+
+prueba("el móvil recibe los artículos enteros y bien colocados", () => {
+  const recibidos = vivos(estadoDe("movil").articulos);
+  assert.equal(recibidos.length, 3);
+  const a1857 = recibidos.find((a) => a.numero === "1857");
+  assert.ok(a1857, "no ha bajado el 1857");
+  assert.equal(a1857.temaId, datos.temaId);
+  assert.equal(a1857.epigrafeId, arts.epigrafeId);
+  assert.ok(a1857.contenido.includes("obligación principal"));
+  assert.equal(recibidos.find((a) => a.id === arts.sueltoId).epigrafeId, undefined);
+});
+
+prueba("el índice cruzado funciona sobre lo que ha bajado", () => {
+  const s = estadoDe("movil");
+  const ref = vivos(s.articulos).find((a) => a.numero === "1857");
+  assert.ok(ref, "no ha bajado el artículo");
+  // Solo está en un tema: no hay cruce que enseñar, pero la clave tiene que
+  // ser la misma que la del portátil.
+  assert.deepEqual(temasDeArticulo(ref, vivos(s.articulos), temasVivos(s.temas)), []);
+  assert.equal(claveArticulo(ref.cuerpo, ref.numero), "CC|1857");
+});
+
+await en("movil", (st) => {
+  const a = vivos(useStore.getState().articulos).find((x) => x.numero === "1857");
+  st.updateArticulo(a.id, { titulo: "Requisitos esenciales" });
+});
+await sincroniza("movil", nube);
+await sincroniza("portatil", nube);
+
+prueba("la rúbrica puesta en el móvil llega al portátil", () => {
+  const a = vivos(estadoDe("portatil").articulos).find((x) => x.numero === "1857");
+  assert.ok(a, "el artículo no está en el portátil");
+  assert.equal(a.titulo, "Requisitos esenciales");
+});
+
+prueba("el reloj del artículo editado es el que arbitró el servidor", () => {
+  const [fila] = enLaNube(
+    `select to_jsonb(t.*) from public.articulos t where numero = '1857'`,
+  );
+  const a = vivos(estadoDe("portatil").articulos).find((x) => x.numero === "1857");
+  assert.ok(a && fila, "no hay artículo con el que comparar el reloj");
+  assert.equal(a.actualizado, Date.parse(fila.updated_at));
+});
+
 console.log("\n== la personalización viaja entre dispositivos ==");
 
 const APARIENCIA = {
@@ -348,6 +456,9 @@ const APARIENCIA = {
   densidad: "compacta",
   ordenTemas: "urgencia",
   vistaPrograma: "lista",
+  // La lente de lectura viaja con el perfil por lo mismo que el resto: se
+  // elige una vez y vale en todos los aparatos del opositor.
+  nivelLectura: "articulos-texto",
 };
 
 await en("portatil", (st) => st.setPerfil(APARIENCIA));
@@ -363,6 +474,7 @@ prueba("la apariencia sube a `perfiles`, columna a columna", () => {
   assert.equal(p.densidad, "compacta");
   assert.equal(p.orden_temas, "urgencia");
   assert.equal(p.vista_programa, "lista");
+  assert.equal(p.nivel_lectura, "articulos-texto");
 });
 
 await sincroniza("movil", nube);
@@ -394,6 +506,7 @@ await en("portatil", (st) =>
     densidad: "normal",
     ordenTemas: "numero",
     vistaPrograma: "mural",
+    nivelLectura: "completo",
   }),
 );
 await sincroniza("portatil", nube);
@@ -770,8 +883,9 @@ prueba("el borrado llega al otro dispositivo", () => {
   );
 });
 
-prueba("la cascada entierra epígrafes, notas, cantes y progreso", () => {
+prueba("la cascada entierra epígrafes, artículos, notas, cantes y progreso", () => {
   const s = estadoDe("movil");
+  assert.equal(vivos(s.articulos).length, 0, "quedan artículos vivos de un tema borrado");
   assert.equal(vivos(s.notas).length, 0, "quedan notas vivas de un tema borrado");
   assert.equal(vivos(s.cantes).length, 0, "quedan cantes vivos de un tema borrado");
   assert.equal(vivosMapa(s.progresos)[datos.temaId], undefined, "el progreso sigue vivo");
@@ -808,6 +922,10 @@ prueba("el tema borrado no resucita al seguir sincronizando", () => {
     `select jsonb_build_object('n', count(*)) from public.temas where deleted_at is null`,
   );
   assert.equal(n, 0, "el tema ha vuelto a la vida en el servidor");
+  const [{ n: articulos }] = enLaNube(
+    `select jsonb_build_object('n', count(*)) from public.articulos where deleted_at is null`,
+  );
+  assert.equal(articulos, 0, "han resucitado artículos de un tema borrado");
 });
 
 /* ------------------------------------------------------------------
@@ -835,6 +953,9 @@ prueba("los dos dispositivos acaban con el mismo expediente", () => {
       .sort(),
     cantes: vivos(s.cantes)
       .map((c) => c.id)
+      .sort(),
+    articulos: vivos(s.articulos)
+      .map((a) => `${a.id}:${a.cuerpo} ${a.numero} ${a.titulo}`)
       .sort(),
     sesiones: s.sesiones.map((x) => `${x.id}:${x.segundos}`).sort(),
     perfil: s.perfil.nombre,

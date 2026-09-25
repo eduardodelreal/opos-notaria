@@ -1,4 +1,5 @@
 import type {
+  Articulo,
   Cante,
   Epigrafe,
   KeyPoint,
@@ -13,6 +14,7 @@ import type {
 } from "../data/types";
 import { ahoraSellado, desfaseAplicable } from "./reloj";
 import {
+  aFilaArticulo,
   aFilaCante,
   aFilaEpigrafe,
   aFilaKeyPoint,
@@ -46,6 +48,12 @@ export interface Expediente {
   perfil: Perfil;
   materias: Materia[];
   temas: Tema[];
+  /**
+   * Los artículos van sueltos y no anidados en el tema como los epígrafes:
+   * son muchos, cuelgan del epígrafe cuando lo tienen y el índice cruzado
+   * los recorre enteros. En el servidor son su propia tabla (0007).
+   */
+  articulos: Articulo[];
   progresos: Record<string, ProgresoTema>;
   sesiones: Sesion[];
   cantes: Cante[];
@@ -190,6 +198,11 @@ export function filasParaPush(
         const e = ctx.epigrafes.get(id);
         recoger(id, e ? aFilaEpigrafe(e.epigrafe, e.temaId, uid) : null);
       }
+      break;
+    }
+    case "articulos": {
+      const idx = porId(exp.articulos, (a) => a.id);
+      for (const id of ids) recoger(id, idx.has(id) ? aFilaArticulo(idx.get(id)!, uid) : null);
       break;
     }
     case "progreso_temas": {

@@ -1,5 +1,6 @@
 import { derivarProgresos } from "../data/derivados";
 import type {
+  Articulo,
   Cante,
   Epigrafe,
   KeyPoint,
@@ -13,6 +14,7 @@ import type {
 } from "../data/types";
 import type { Expediente, Marcas } from "./expediente";
 import {
+  deFilaArticulo,
   deFilaCante,
   deFilaEpigrafe,
   deFilaKeyPoint,
@@ -26,6 +28,7 @@ import {
   deFilaVuelta,
   relojFila,
   type Fila,
+  type FilaArticulo,
   type FilaCante,
   type FilaEpigrafe,
   type FilaKeyPoint,
@@ -158,6 +161,14 @@ function aplicarLote(acc: Acumulador, lote: LoteBajado, marcas: Marcas): void {
       return aplicarTemas(acc, lote.filas as FilaTema[]);
     case "epigrafes":
       return aplicarEpigrafes(acc, lote.filas as FilaEpigrafe[]);
+    case "articulos":
+      return lista<Articulo, FilaArticulo>(
+        acc,
+        "articulos",
+        lote.filas as FilaArticulo[],
+        deFilaArticulo,
+        (a) => a.actualizado,
+      );
     case "progreso_temas":
       return aplicarProgresos(acc, lote.filas as FilaProgreso[]);
     case "sesiones":
@@ -221,7 +232,7 @@ function aplicarLote(acc: Acumulador, lote: LoteBajado, marcas: Marcas): void {
  */
 function lista<E extends { id: string }, F extends Fila>(
   acc: Acumulador,
-  clave: "materias" | "cantes" | "keypoints" | "notas" | "simulacros" | "vueltas",
+  clave: "materias" | "articulos" | "cantes" | "keypoints" | "notas" | "simulacros" | "vueltas",
   filas: F[],
   deFila: (f: F) => E,
   reloj: (e: E) => number,
@@ -534,6 +545,11 @@ function cascadaLocal(acc: Acumulador): void {
     acc.cambia.add("progresos");
   }
 
+  const articulos = porTema(acc.exp.articulos);
+  if (articulos !== acc.exp.articulos) {
+    acc.exp.articulos = articulos;
+    acc.cambia.add("articulos");
+  }
   const cantes = porTema(acc.exp.cantes);
   if (cantes !== acc.exp.cantes) {
     acc.exp.cantes = cantes;
