@@ -16,11 +16,13 @@
  *   npm run build && npx next start -p 3111
  *   npm i -D playwright && node docs/prueba-e2e.mjs
  *
+ * `BASE` cambia la URL si el servidor está en otro puerto.
+ *
  * Deja capturas numeradas en OUT. Sale con 1 si algo falla.
  */
 import { chromium } from "playwright";
 
-const BASE = "http://127.0.0.1:3111";
+const BASE = process.env.BASE ?? "http://127.0.0.1:3111";
 const OUT = process.env.OUT ?? "./capturas";
 
 const TEMAS = `1. La persona física. El nacimiento y la personalidad. La protección del concebido.
@@ -131,6 +133,159 @@ await paso("marcar el tema como cantable", async () => {
   await pg.getByRole("button", { name: "Cantable" }).first().click();
   await pg.waitForTimeout(300);
 });
+
+
+// 4-bis. Artículos: se dan de alta PEGANDO un bloque, y la lente de tres
+// niveles decide qué se ve. Lo que se comprueba no es que los botones
+// existan, sino lo que hay en el DOM en cada nivel: en "solo artículos" no
+// puede verse el texto de los epígrafes ni el de los artículos, porque es
+// un índice; en "completo" tiene que verse todo.
+const ARTICULOS = `Artículo 1857. Requisitos esenciales
+Son requisitos esenciales de los contratos de prenda e hipoteca que se constituya para asegurar el cumplimiento de una obligación principal.
+
+Artículo 1858 CC. Realización del valor
+Es también de esencia de estos contratos que, vencida la obligación principal, puedan ser enajenadas las cosas en que consiste la prenda o hipoteca.
+
+Art. 104 LH — Sujeción directa de los bienes
+La hipoteca sujeta directa e inmediatamente los bienes sobre que se impone al cumplimiento de la obligación para cuya seguridad fue constituida.`;
+
+// Trozos que solo están en un sitio: sirven para saber QUÉ se está viendo.
+const TEXTO_EPIGRAFE = "derecho real de garantía";
+const TEXTO_ARTICULO = "Son requisitos esenciales de los contratos de prenda";
+
+const cuenta = (sel) => pg.locator(sel).count();
+const cuerpo = async () => pg.locator("body").innerText();
+
+await paso("dar de alta tres artículos pegando un bloque", async () => {
+  await pg.getByRole("button", { name: /Pegar artículos/ }).first().click();
+  await pg.locator("textarea[aria-label='Bloque de artículos']").fill(ARTICULOS);
+  await pg.getByText("3 artículos detectados").waitFor({ timeout: 5000 });
+  await pg.getByRole("button", { name: /Guardar 3 artículos/ }).click();
+  await pg.waitForTimeout(600);
+  const n = await cuenta("[data-articulo]");
+  if (n !== 3) throw new Error(`se han guardado ${n} artículos`);
+  const txt = await cuerpo();
+  for (const marca of ["1857", "104", "Sujeción directa de los bienes"]) {
+    if (!txt.includes(marca)) throw new Error(`no se ve "${marca}" en la lectura`);
+  }
+});
+
+await paso("«solo artículos» es un índice: ni texto de artículo ni de epígrafe", async () => {
+  await pg.locator("[data-nivel=articulos]").first().click();
+  await pg.waitForTimeout(400);
+  if ((await cuenta("[data-articulo]")) !== 3)
+    throw new Error("han desaparecido artículos del índice");
+  if ((await cuenta("[data-articulo-texto]")) !== 0)
+    throw new Error("en «solo artículos» se está pintando el texto de los artículos");
+  if ((await cuenta("[data-epigrafe-texto]")) !== 0)
+    throw new Error("en «solo artículos» se está pintando el texto de los epígrafes");
+  const txt = await cuerpo();
+  if (!txt.includes("Sujeción directa de los bienes"))
+    throw new Error("el índice no lista las rúbricas");
+  if (txt.includes(TEXTO_EPIGRAFE))
+    throw new Error("el texto del epígrafe se ve en «solo artículos»");
+  if (txt.includes(TEXTO_ARTICULO))
+    throw new Error("el texto del artículo se ve en «solo artículos»");
+});
+await pg.screenshot({ path: `${OUT}/11-nivel-articulos.png`, fullPage: true });
+
+await paso("«artículos desarrollados» añade el texto del artículo, no el del epígrafe", async () => {
+  await pg.locator("[data-nivel=articulos-texto]").first().click();
+  await pg.waitForTimeout(400);
+  if ((await cuenta("[data-articulo-texto]")) !== 3)
+    throw new Error("faltan textos de artículo en el nivel desarrollado");
+  if ((await cuenta("[data-epigrafe-texto]")) !== 0)
+    throw new Error("el texto del epígrafe no debería salir todavía");
+  const txt = await cuerpo();
+  if (!txt.includes(TEXTO_ARTICULO)) throw new Error("no se lee el texto del artículo");
+  if (txt.includes(TEXTO_EPIGRAFE))
+    throw new Error("el texto del epígrafe se ve en «artículos desarrollados»");
+});
+await pg.screenshot({ path: `${OUT}/12-nivel-desarrollados.png`, fullPage: true });
+
+await paso("«tema completo» sí enseña el texto de los epígrafes", async () => {
+  await pg.locator("[data-nivel=completo]").first().click();
+  await pg.waitForTimeout(400);
+  if ((await cuenta("[data-epigrafe-texto]")) < 3)
+    throw new Error("faltan textos de epígrafe en el tema completo");
+  const txt = await cuerpo();
+  if (!txt.includes(TEXTO_EPIGRAFE))
+    throw new Error("el tema completo no enseña el texto del epígrafe");
+  if (!txt.includes(TEXTO_ARTICULO))
+    throw new Error("el tema completo se ha comido el texto del artículo");
+});
+await pg.screenshot({ path: `${OUT}/13-nivel-completo.png`, fullPage: true });
+
+await paso("el texto de los artículos usa la tipografía elegida para el temario", async () => {
+  const caja = pg.locator("[data-articulo-texto]").first();
+  const tipo = await caja.evaluate((el) => {
+    const c = getComputedStyle(el);
+    return { familia: c.fontFamily, tamano: c.fontSize };
+  });
+  // Todavía no se ha tocado nada en Ajustes: serif a 17px, lo de siempre.
+  if (tipo.tamano !== "17px") throw new Error(`cuerpo del artículo: ${tipo.tamano}`);
+  if (!/Newsreader/i.test(tipo.familia))
+    throw new Error(`el artículo no va en la serif del temario: ${tipo.familia}`);
+});
+
+await paso("el nivel elegido sobrevive a la recarga", async () => {
+  await pg.locator("[data-nivel=articulos]").first().click();
+  await pg.waitForTimeout(500);
+  await pg.reload({ waitUntil: "networkidle" });
+  await pg.waitForTimeout(900);
+  const marcado = await pg
+    .locator("[data-nivel=articulos]")
+    .first()
+    .getAttribute("aria-pressed");
+  if (marcado !== "true") throw new Error("tras recargar el nivel ha vuelto atrás");
+  if ((await cuenta("[data-epigrafe-texto]")) !== 0)
+    throw new Error("tras recargar se pinta el texto de los epígrafes");
+  if ((await cuenta("[data-articulo]")) !== 3)
+    throw new Error("los artículos no han sobrevivido a la recarga");
+});
+
+await paso("y el tema siguiente se abre en el mismo nivel", async () => {
+  await pg.goto(`${BASE}/programa`, { waitUntil: "networkidle" });
+  const otro = await pg.locator('a[href^="/tema/"]').nth(2).getAttribute("href");
+  await pg.goto(BASE + otro, { waitUntil: "networkidle" });
+  await pg.getByText("Tiempo invertido").waitFor({ timeout: 8000 });
+  await pg.getByRole("button", { name: /Pegar artículos/ }).first().click();
+  await pg.locator("textarea[aria-label='Bloque de artículos']").fill(
+    `Artículo 17 CC. Españoles de origen
+Son españoles de origen los nacidos de padre o madre españoles.`,
+  );
+  await pg.getByText("1 artículo detectado").waitFor({ timeout: 5000 });
+  await pg.getByRole("button", { name: /Guardar 1 artículo/ }).click();
+  await pg.waitForTimeout(600);
+  const marcado = await pg
+    .locator("[data-nivel=articulos]")
+    .first()
+    .getAttribute("aria-pressed");
+  if (marcado !== "true")
+    throw new Error("el tema nuevo no ha abierto en el nivel elegido");
+  if ((await cuenta("[data-articulo-texto]")) !== 0)
+    throw new Error("el tema nuevo pinta el texto pese al nivel «solo artículos»");
+});
+
+await paso("el barrido por artículos está también en el repaso", async () => {
+  await pg.goto(`${BASE}/repaso`, { waitUntil: "networkidle" });
+  await pg.getByRole("button", { name: /^Artículos/ }).click();
+  await pg.waitForTimeout(500);
+  const n = await cuenta("[data-articulo]");
+  if (n < 4) throw new Error(`el repaso solo lista ${n} artículos de los 4`);
+  const txt = await cuerpo();
+  if (!txt.includes("Sujeción directa de los bienes"))
+    throw new Error("el repaso no lista las rúbricas");
+  if (txt.includes(TEXTO_EPIGRAFE))
+    throw new Error("el repaso ignora el nivel: pinta el texto de los epígrafes");
+  // Se deja la lente donde estaba, que es el valor por defecto de la app.
+  await pg.locator("[data-nivel=completo]").first().click();
+  await pg.waitForTimeout(400);
+  if ((await cuenta("[data-epigrafe-texto]")) === 0)
+    throw new Error("en el repaso el tema completo no enseña los epígrafes");
+});
+await pg.screenshot({ path: `${OUT}/14-repaso-articulos.png`, fullPage: true });
+await pg.goto(BASE + href, { waitUntil: "networkidle" });
 
 // 5. Cante en vivo
 const temaId = href.split("/").pop();

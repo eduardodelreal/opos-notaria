@@ -2,10 +2,11 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Brain, Check, Eye, Play, RotateCcw, X } from "lucide-react";
+import { Brain, Check, Eye, Play, RotateCcw, Scale, X } from "lucide-react";
 import {
   ordenDeTriaje,
   temasOrdenados,
+  useArticulos,
   useKeyPoints,
   useMaterias,
   useProgresos,
@@ -25,17 +26,21 @@ import {
   Vacio,
   cx,
 } from "@/components/ui";
-import { ESTADOS } from "@/lib/data/types";
+import { LecturaTema, SelectorNivel, useNivelLectura } from "@/components/Lectura";
+import { ESTADOS, type Articulo } from "@/lib/data/types";
 import { colaDeRepaso, estadoEfectivo, intervaloDias } from "@/lib/data/srs";
 import { haceTexto, horasMin } from "@/lib/utils/time";
 import { plural } from "@/lib/utils/texto";
 
 export default function Repaso() {
-  const [pestana, setPestana] = React.useState<"temas" | "keypoints">("temas");
+  const [pestana, setPestana] = React.useState<
+    "temas" | "articulos" | "keypoints"
+  >("temas");
   const temas = useTemas();
   const progresos = useProgresos();
   const perfil = useStore((s) => s.perfil);
   const keypoints = useKeyPoints();
+  const articulos = useArticulos();
 
   const materias = useMaterias();
 
@@ -104,12 +109,15 @@ export default function Repaso() {
           onCambio={setPestana}
           opciones={[
             { id: "temas", label: "Temas oxidados", contador: cola.length },
+            { id: "articulos", label: "Artículos", contador: articulos.length },
             { id: "keypoints", label: "Keypoints", contador: pendientes.length },
           ]}
         />
       </div>
 
-      {pestana === "temas" ? <ColaTemas cola={cola} /> : <DrillKeyPoints />}
+      {pestana === "temas" && <ColaTemas cola={cola} />}
+      {pestana === "articulos" && <BarridoArticulos articulos={articulos} />}
+      {pestana === "keypoints" && <DrillKeyPoints />}
     </>
   );
 }
@@ -238,6 +246,106 @@ function ColaTemas({
         })}
       </Card>
     </>
+  );
+}
+
+/* ========================================================================== */
+/*                       Barrido por artículos                                */
+/* ========================================================================== */
+
+/**
+ * El mismo barrido de la ficha del tema, pero de todos los temas a la vez:
+ * es aquí, en el repaso, donde se usa de verdad —"tema 52: artículo tal,
+ * tal y tal"— y no abriendo tema por tema.
+ *
+ * Respeta la misma lente que la ficha (`perfil.nivelLectura`): cambiar el
+ * nivel aquí lo cambia también allí, porque es una sola preferencia de
+ * lectura y no dos.
+ */
+function BarridoArticulos({ articulos }: { articulos: Articulo[] }) {
+  const temas = useTemas();
+  const materias = useMaterias();
+  const progresos = useProgresos();
+  const perfil = useStore((s) => s.perfil);
+  const [nivel] = useNivelLectura();
+
+  const bloques = React.useMemo(() => {
+    const porTema = new Map<string, Articulo[]>();
+    for (const a of articulos) {
+      const lista = porTema.get(a.temaId);
+      if (lista) lista.push(a);
+      else porTema.set(a.temaId, [a]);
+    }
+    return temasOrdenados(
+      temas.filter((t) => porTema.has(t.id)),
+      materias,
+      ordenDeTriaje(perfil.ordenTemas),
+      progresos,
+      perfil.diasOxido,
+    ).map((tema) => ({ tema, articulos: porTema.get(tema.id) ?? [] }));
+  }, [articulos, temas, materias, progresos, perfil.ordenTemas, perfil.diasOxido]);
+
+  if (!bloques.length) {
+    return (
+      <Card className="p-0">
+        <Vacio
+          icono={<Scale className="size-5" />}
+          titulo="Todavía no has dado de alta artículos"
+          texto="El barrido antes de cantar es la lista de artículos del tema: número y rúbrica, uno detrás de otro. Se pegan de golpe desde la ficha de cada tema."
+          accion={
+            <Link href="/programa">
+              <Boton variante="secundario">Ir al programa</Boton>
+            </Link>
+          }
+        />
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex flex-wrap items-center justify-between gap-3 py-3.5">
+        <p className="text-[12.5px] text-muted">
+          {plural(articulos.length, "artículo")} en{" "}
+          {plural(bloques.length, "tema")}. El nivel es el mismo que en la ficha
+          del tema.
+        </p>
+        <SelectorNivel />
+      </Card>
+
+      {bloques.map(({ tema, articulos: suyos }) => {
+        const materia = materias.find((m) => m.id === tema.materiaId);
+        return (
+          <Card key={tema.id} className="p-0 overflow-hidden">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 border-b border-[var(--border)]">
+              {materia && <Punto color={materia.color} />}
+              <Link
+                href={`/tema/${tema.id}`}
+                className="text-[13.5px] hover:underline min-w-0 flex-1 truncate"
+              >
+                <span className="text-subtle numeric mr-2">T{tema.numero}</span>
+                {tema.titulo}
+              </Link>
+              <span className="text-[11.5px] text-subtle numeric shrink-0">
+                {plural(suyos.length, "artículo")}
+              </span>
+              <Link href={`/cante/vivo?tema=${tema.id}`} className="shrink-0">
+                <Boton tam="sm" variante="secundario">
+                  Cantar
+                </Boton>
+              </Link>
+            </div>
+            <div className="px-5 py-4">
+              <LecturaTema
+                epigrafes={tema.epigrafes}
+                articulos={suyos}
+                nivel={nivel}
+              />
+            </div>
+          </Card>
+        );
+      })}
+    </div>
   );
 }
 

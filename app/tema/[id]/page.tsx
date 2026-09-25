@@ -14,12 +14,14 @@ import {
   NotebookPen,
   Play,
   Plus,
+  Scale,
   Sparkles,
   Star,
   Trash2,
   Wand2,
 } from "lucide-react";
 import {
+  useArticulos,
   useCantes,
   useKeyPoints,
   useMaterias,
@@ -45,7 +47,14 @@ import {
   useConfirmacion,
 } from "@/components/ui";
 import { ComparativaEpigrafes, Linea } from "@/components/graficos";
-import { ESTADOS, type AnalisisCante, type Cante, type Tema } from "@/lib/data/types";
+import { ModalPegarArticulos, PanelLectura } from "@/components/Lectura";
+import {
+  ESTADOS,
+  type AnalisisCante,
+  type Articulo,
+  type Cante,
+  type Tema,
+} from "@/lib/data/types";
 import { estadoEfectivo, intervaloDias, ultimoContacto } from "@/lib/data/srs";
 import { aEpigrafes, minutosEstimados, parsearEpigrafes } from "@/lib/data/parser";
 import { fecha, haceTexto, horasMin, reloj } from "@/lib/utils/time";
@@ -71,6 +80,15 @@ export default function FichaTema() {
   const cantes = useCantes();
   const keypoints = useKeyPoints();
   const notas = useNotas();
+  const articulos = useArticulos();
+
+  // Fuera del selector: filtrar dentro de uno devuelve un array nuevo en
+  // cada render y con él el bucle infinito de siempre (React #185).
+  const temaId = tema?.id;
+  const misArticulos = React.useMemo(
+    () => (temaId ? articulos.filter((a) => a.temaId === temaId) : []),
+    [articulos, temaId],
+  );
 
   const setEstado = useStore((s) => s.setEstado);
   const setDificultad = useStore((s) => s.setDificultad);
@@ -287,7 +305,7 @@ export default function FichaTema() {
           valor={pestana}
           onCambio={setPestana}
           opciones={[
-            { id: "epigrafes", label: "Epígrafes", contador: tema.epigrafes.length },
+            { id: "epigrafes", label: "Tema", contador: tema.epigrafes.length },
             { id: "cantes", label: "Cantes", contador: misCantes.length },
             { id: "keypoints", label: "Keypoints", contador: misKeypoints.length },
             { id: "notas", label: "Notas", contador: misNotas.length },
@@ -311,7 +329,9 @@ export default function FichaTema() {
         </button>
       </div>
 
-      {pestana === "epigrafes" && <PanelEpigrafes tema={tema} />}
+      {pestana === "epigrafes" && (
+        <PanelTema tema={tema} articulos={misArticulos} />
+      )}
       {pestana === "cantes" && <PanelCantes tema={tema} cantes={misCantes} />}
       {pestana === "keypoints" && <PanelKeyPoints tema={tema} />}
       {pestana === "notas" && <PanelNotas tema={tema} />}
@@ -325,13 +345,38 @@ export default function FichaTema() {
 /*                                Epígrafes                                   */
 /* ========================================================================== */
 
-function PanelEpigrafes({ tema }: { tema: { id: string; titulo: string; epigrafes: { id: string; orden: number; titulo: string; texto?: string }[] } }) {
+/**
+ * La primera pestaña es el TEMA, no una lista de epígrafes: arriba la
+ * lente —los artículos al nivel de detalle elegido— y debajo el editor de
+ * epígrafes de siempre.
+ *
+ * Un tema sin artículos se ve exactamente como se veía antes de que la
+ * lente existiera: solo cambia que el editor ofrece una forma de empezar a
+ * pegarlos.
+ */
+function PanelTema({ tema, articulos }: { tema: Tema; articulos: Articulo[] }) {
+  return (
+    <div className="space-y-4">
+      {articulos.length > 0 && <PanelLectura tema={tema} articulos={articulos} />}
+      <PanelEpigrafes tema={tema} sinArticulos={articulos.length === 0} />
+    </div>
+  );
+}
+
+function PanelEpigrafes({
+  tema,
+  sinArticulos,
+}: {
+  tema: Tema;
+  sinArticulos: boolean;
+}) {
   const setEpigrafes = useStore((s) => s.setEpigrafes);
   const addEpigrafe = useStore((s) => s.addEpigrafe);
   const updateEpigrafe = useStore((s) => s.updateEpigrafe);
   const removeEpigrafe = useStore((s) => s.removeEpigrafe);
 
   const [modalPegar, setModalPegar] = React.useState(false);
+  const [modalArticulos, setModalArticulos] = React.useState(false);
   const [nuevo, setNuevo] = React.useState("");
   const [abierto, setAbierto] = React.useState<string | null>(null);
 
@@ -349,10 +394,24 @@ function PanelEpigrafes({ tema }: { tema: { id: string; titulo: string; epigrafe
               ? `${plural(tema.epigrafes.length, "epígrafe")}${minutosTotales > 0 ? ` · ~${minutosTotales.toFixed(1)} min de cante estimados` : ""}`
               : "Sin epígrafes todavía"}
           </div>
-          <Boton tam="sm" variante="secundario" onClick={() => setModalPegar(true)}>
-            <Wand2 className="size-3.5" />
-            Pegar tema y trocear
-          </Boton>
+          <div className="flex flex-wrap gap-2">
+            <Boton tam="sm" variante="secundario" onClick={() => setModalPegar(true)}>
+              <Wand2 className="size-3.5" />
+              Pegar tema y trocear
+            </Boton>
+            {/* La entrada a los artículos solo hace falta aquí mientras no
+                haya ninguno: en cuanto los hay, la lente de arriba manda. */}
+            {sinArticulos && (
+              <Boton
+                tam="sm"
+                variante="secundario"
+                onClick={() => setModalArticulos(true)}
+              >
+                <Scale className="size-3.5" />
+                Pegar artículos
+              </Boton>
+            )}
+          </div>
         </div>
 
         {tema.epigrafes.length === 0 ? (
@@ -460,6 +519,12 @@ function PanelEpigrafes({ tema }: { tema: { id: string; titulo: string; epigrafe
           </Boton>
         </div>
       </Card>
+
+      <ModalPegarArticulos
+        abierto={modalArticulos}
+        onCerrar={() => setModalArticulos(false)}
+        tema={tema}
+      />
 
       <ModalPegarTema
         abierto={modalPegar}
