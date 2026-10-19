@@ -243,45 +243,37 @@ export default function FichaTema() {
           <div>
             <TituloSeccion>Estado del tema</TituloSeccion>
             <div className="flex flex-wrap gap-1.5">
-              {ESTADOS.filter((e) => e.id !== "oxidado").map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => setEstado(tema.id, e.id)}
-                  title={e.desc}
-                  className={cx(
-                    "h-8 px-3 rounded-lg border text-[12.5px] inline-flex items-center gap-2 transition-all",
-                    progreso.estado === e.id
-                      ? "text-fg"
-                      : "border-[var(--border)] text-muted hover:text-fg",
-                  )}
-                  style={
-                    progreso.estado === e.id
-                      ? {
-                          borderColor: `color-mix(in srgb, ${e.color} 55%, transparent)`,
-                          background: `color-mix(in srgb, ${e.color} 14%, transparent)`,
-                        }
-                      : undefined
-                  }
-                >
-                  <Punto color={e.color} size={7} />
-                  {e.label}
-                </button>
-              ))}
-              {estado === "oxidado" && (
-                <span
-                  title={metaEstado.desc}
-                  className="h-8 px-3 rounded-lg border text-[12.5px] inline-flex items-center gap-2 text-fg cursor-default"
-                  style={{
-                    borderColor: `color-mix(in srgb, ${metaEstado.color} 55%, transparent)`,
-                    background: `color-mix(in srgb, ${metaEstado.color} 14%, transparent)`,
-                  }}
-                >
-                  <Punto color={metaEstado.color} size={7} />
-                  {metaEstado.label}
-                </span>
-              )}
+              {ESTADOS.map((e) => {
+                // Se enciende el estado que se ve, no el guardado: el óxido
+                // automático pinta "Oxidado" aunque en base de datos siga dominado.
+                const activo = estado === e.id;
+                return (
+                  <button
+                    key={e.id}
+                    onClick={() => setEstado(tema.id, e.id)}
+                    title={e.desc}
+                    className={cx(
+                      "h-8 px-3 rounded-lg border text-[12.5px] inline-flex items-center gap-2 transition-all",
+                      activo
+                        ? "text-fg"
+                        : "border-[var(--border)] text-muted hover:text-fg",
+                    )}
+                    style={
+                      activo
+                        ? {
+                            borderColor: `color-mix(in srgb, ${e.color} 55%, transparent)`,
+                            background: `color-mix(in srgb, ${e.color} 14%, transparent)`,
+                          }
+                        : undefined
+                    }
+                  >
+                    <Punto color={e.color} size={7} />
+                    {e.label}
+                  </button>
+                );
+              })}
             </div>
-            {estado === "oxidado" && (
+            {estado === "oxidado" && progreso.estado !== "oxidado" && (
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <p className="text-[12px] text-[var(--st-oxidado)]">
                   Oxidado automáticamente: llevas más de{" "}
@@ -297,6 +289,12 @@ export default function FichaTema() {
                   Ya lo he repasado
                 </button>
               </div>
+            )}
+            {progreso.estado === "oxidado" && (
+              <p className="text-[12px] text-[var(--st-oxidado)] mt-3">
+                Lo has marcado tú como oxidado. Vuelve a su sitio cuando lo cantes o
+                cuando elijas otro estado.
+              </p>
             )}
           </div>
 
