@@ -161,6 +161,8 @@ interface Acciones {
   setDificultad: (temaId: string, dificultad: number) => void;
   alternarFavorito: (temaId: string) => void;
   sumarVuelta: (temaId: string) => void;
+  /** Repaso rápido fuera del crono: refresca el contacto y le quita el óxido. */
+  marcarRepasado: (temaId: string) => void;
 
   // --- crono ---
   iniciarCrono: (tipo: TipoSesion, temaId?: string) => void;
@@ -849,6 +851,17 @@ export const useStore = create<Store>()(
               ...s.vueltas,
               { id: uid(), temaId, fecha: Date.now(), actualizado: Date.now() },
             ],
+          };
+        }),
+
+      marcarRepasado: (temaId) =>
+        escribir((s) => {
+          const previo = s.progresos[temaId] ?? progresoVacio(temaId);
+          return {
+            progresos: {
+              ...s.progresos,
+              [temaId]: conSRS({ ...previo, ultimoEstudio: Date.now() }),
+            },
           };
         }),
 

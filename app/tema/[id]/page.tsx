@@ -92,6 +92,7 @@ export default function FichaTema() {
 
   const setEstado = useStore((s) => s.setEstado);
   const setDificultad = useStore((s) => s.setDificultad);
+  const marcarRepasado = useStore((s) => s.marcarRepasado);
   const alternarFavorito = useStore((s) => s.alternarFavorito);
   const iniciarCrono = useStore((s) => s.iniciarCrono);
   const updateTema = useStore((s) => s.updateTema);
@@ -266,11 +267,36 @@ export default function FichaTema() {
                   {e.label}
                 </button>
               ))}
+              {estado === "oxidado" && (
+                <span
+                  title={metaEstado.desc}
+                  className="h-8 px-3 rounded-lg border text-[12.5px] inline-flex items-center gap-2 text-fg cursor-default"
+                  style={{
+                    borderColor: `color-mix(in srgb, ${metaEstado.color} 55%, transparent)`,
+                    background: `color-mix(in srgb, ${metaEstado.color} 14%, transparent)`,
+                  }}
+                >
+                  <Punto color={metaEstado.color} size={7} />
+                  {metaEstado.label}
+                </span>
+              )}
             </div>
-            {estado === "oxidado" && progreso.estado !== "oxidado" && (
-              <p className="text-[12px] text-[var(--st-oxidado)] mt-3">
-                Marcado como oxidado automáticamente: llevas más de {perfil.diasOxido} días sin tocarlo.
-              </p>
+            {estado === "oxidado" && (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <p className="text-[12px] text-[var(--st-oxidado)]">
+                  Oxidado automáticamente: llevas más de{" "}
+                  {progreso.estado === "dominado"
+                    ? perfil.diasOxido
+                    : Math.round(perfil.diasOxido * 0.6)}{" "}
+                  días sin tocarlo. Estúdialo o cántalo para quitarle el óxido.
+                </p>
+                <button
+                  onClick={() => marcarRepasado(tema.id)}
+                  className="h-8 px-3 rounded-lg border border-[var(--border)] text-[12.5px] text-muted hover:text-fg transition-all"
+                >
+                  Ya lo he repasado
+                </button>
+              </div>
             )}
           </div>
 
